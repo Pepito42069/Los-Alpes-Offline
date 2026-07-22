@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mi Finca — Cuentas e Inventario</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#24402A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Mi Finca">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+  :root{
+    --paper:#EFE6D0; --paper-dark:#E4D8B8; --card:#FBF6E9;
+    --green:#24402A; --green-light:#3B5940;
+    --ink:#3B2E20; --ink-faint:#7A6A52;
+    --ochre:#B8791F; --ochre-light:#D9A552;
+    --brick:#9A3324; --brick-light:#C9584A;
+    --olive:#5C7A4B; --olive-light:#7E9C6C;
+    --line:#C9BB94;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--paper-dark); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .serif{ font-family:Georgia,"Times New Roman",serif; }
+  .mono{ font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
+  header{ background:var(--green); padding:18px 16px 0; }
+  header h1{ margin:0; color:var(--paper); font-size:20px; display:flex; align-items:center; gap:8px; }
+  header p{ margin:2px 0 10px; color:var(--olive-light); font-size:12px; }
+  nav{ display:flex; gap:4px; background:var(--green); padding:0 8px; }
+  nav button{
+    flex:1; border:none; background:var(--paper-dark); color:var(--ink-faint);
+    font-size:12px; font-weight:600; padding:10px 4px; border-radius:10px 10px 0 0;
+    border-top:2px solid transparent; cursor:pointer;
+  }
+  nav button.active{ background:var(--card); color:var(--green); border-top-color:var(--ochre); }
+  main{ max-width:640px; margin:0 auto; padding:16px; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:14px; }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .stat-label{ font-size:11px; font-weight:600; color:var(--ink-faint); }
+  .stat-value{ font-size:19px; font-weight:700; margin-top:4px; }
+  .row{ display:flex; justify-content:space-between; align-items:center; gap:8px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .row:last-child{ border-bottom:none; }
+  .muted{ color:var(--ink-faint); font-size:12px; }
+  .btn{
+    display:inline-flex; align-items:center; gap:6px; border:none; border-radius:999px;
+    padding:9px 16px; font-size:13px; font-weight:700; cursor:pointer;
+  }
+  .btn-green{ background:var(--green); color:var(--paper); }
+  .btn-ochre{ background:var(--ochre); color:var(--ink); }
+  .btn-ghost{ background:transparent; color:var(--ink-faint); }
+  .btn:active{ transform:scale(.96); }
+  label{ font-size:12px; font-weight:600; color:var(--ink-faint); display:block; margin-bottom:3px; }
+  input, select{
+    width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px;
+    font-size:14px; background:#fff8; color:var(--ink);
+  }
+  .field{ margin-bottom:10px; }
+  .fields2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .fields3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  .toggle-type{ display:flex; gap:8px; margin-bottom:10px; }
+  .toggle-type button{
+    flex:1; padding:9px; border-radius:8px; font-weight:700; font-size:13px; cursor:pointer;
+    border:1px solid var(--line); background:transparent; color:var(--ink); text-transform:capitalize;
+  }
+  .toggle-type button.on-ingreso{ background:var(--olive); color:var(--paper); border-color:var(--olive); }
+  .toggle-type button.on-gasto{ background:var(--brick); color:var(--paper); border-color:var(--brick); }
+  .filters{ display:flex; gap:6px; margin-bottom:10px; }
+  .filters button{
+    padding:5px 12px; border-radius:999px; font-size:11px; font-weight:700; cursor:pointer;
+    border:1px solid var(--green); background:transparent; color:var(--ink-faint); text-transform:capitalize;
+  }
+  .filters button.active{ background:var(--green); color:var(--paper); }
+  .icon-btn{ background:none; border:none; cursor:pointer; padding:4px; font-size:14px; }
+  .warn{ color:var(--brick); }
+  .ok{ color:var(--olive); }
+  .empty{ text-align:center; color:var(--ink-faint); font-size:13px; padding:24px 0; }
+  .bars{ display:flex; align-items:flex-end; gap:10px; height:150px; padding-top:8px; }
+  .bar-group{ flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; }
+  .bar-pair{ display:flex; align-items:flex-end; gap:3px; height:120px; }
+  .bar{ width:12px; border-radius:3px 3px 0 0; }
+  .pie-wrap{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .pie{ width:120px; height:120px; border-radius:50%; flex-shrink:0; }
+  .legend-item{ display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; }
+  .dot{ width:9px; height:9px; border-radius:50%; display:inline-block; }
+  .backup-row{ display:flex; gap:8px; flex-wrap:wrap; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  th{ text-align:left; font-size:11px; color:var(--ink-faint); padding-bottom:4px; border-bottom:1px solid var(--line); }
+  td{ padding:5px 0; border-bottom:1px solid var(--line); }
+  @media print{
+    header, nav, .no-print{ display:none !important; }
+    body{ background:#fff; }
+    .card{ border:none; box-shadow:none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌾 <span id="finca-nombre">Mi Finca</span></h1>
+  <p>Ganado de levante y leche · Cuentas e inventario · funciona sin internet</p>
+</header>
+<nav id="tabnav" class="no-print"></nav>
+<main id="app"></main>
+
+<script>
+// ---------- Storage (100% local, no network) ----------
+const STORAGE_KEY = "finca-offline-data-v1";
+
+function loadData(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw) return JSON.parse(raw);
+  }catch(e){ console.error(e); }
+  return { transactions: [], inventory: [] };
+}
+function saveData(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ transactions: state.transactions, inventory: state.inventory }));
+}
+
+// ---------- State ----------
+const data0 = loadData();
+const state = {
+  tab: "resumen",
+  transactions: data0.transactions || [],
+  inventory: data0.inventory || [],
+  editingTx: null,
+  editingInv: null,
+  filter: "todos",
+  repFrom: (()=>{ const d=new Date(); d.setMonth(d.getMonth()-1); return d.toISOString().slice(0,10); })(),
+  repTo: new Date().toISOString().slice(0,10),
+};
+
+const INCOME_CATS = ["Venta de leche","Venta de ganado de levante","Venta de terneros","Venta de descarte","Otros ingresos"];
+const EXPENSE_CATS = ["Concentrado y sales","Veterinario y medicamentos","Mano de obra","Pastos y potreros","Transporte","Mantenimiento","Otros gastos"];
+const INV_CATS = ["Concentrado y sales","Medicamentos veterinarios","Insumos de ordeño","Ganado (lotes)","Herramientas y equipo"];
+const PIE_COLORS = ["#9A3324","#B8791F","#5C7A4B","#3B5940","#C9584A","#7E9C6C"];
+
+const uid = () => Math.random().toString(36).slice(2,10);
+const fmtCOP = (n) => new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(n||0);
+const fmtDate = (iso) => { if(!iso) return ""; const d=new Date(iso+"T00:00:00"); return d.toLocaleDateString("es-CO",{day:"2-digit",month:"short",year:"numeric"}); };
+const monthLabel = (iso) => { const d=new Date(iso+"T00:00:00"); return d.toLocaleDateString("es-CO",{month:"short",year:"2-digit"}); };
+const todayISO = () => new Date().toISOString().slice(0,10);
+
+function setTab(t){ state.tab=t; render(); }
+window.setTab = setTab;
+
+// ---------- Render ----------
+function render(){
+  renderNav();
+  const app = document.getElementById("app");
+  if(state.tab==="resumen") app.innerHTML = viewResumen();
+  else if(state.tab==="cuentas") app.innerHTML = viewCuentas();
+  else if(state.tab==="inventario") app.innerHTML = viewInventario();
+  else if(state.tab==="reportes") app.innerHTML = viewReportes();
+  bindEvents();
+}
+
+function renderNav(){
+  const tabs = [["resumen","📋 Resumen"],["cuentas","💰 Cuentas"],["inventario","📦 Inventario"],["reportes","📊 Reportes"]];
+  document.getElementById("tabnav").innerHTML = tabs.map(([id,label])=>
+    `<button class="${state.tab===id?'active':''}" onclick="setTab('${id}')">${label}</button>`
+  ).join("");
+}
+
+// ---------- Resumen ----------
+function viewResumen(){
+  const ingresos = state.transactions.filter(t=>t.type==="ingreso").reduce((s,t)=>s+t.amount,0);
+  const gastos = state.transactions.filter(t=>t.type==="gasto").reduce((s,t)=>s+t.amount,0);
+  const balance = ingresos-gastos;
+  const valorInv = state.inventory.reduce((s,i)=>s+i.quantity*i.unitValue,0);
+
+  const map = {};
+  state.transactions.forEach(t=>{
+    const key = t.date.slice(0,7);
+    if(!map[key]) map[key] = { key, label: monthLabel(t.date), ingreso:0, gasto:0 };
+    map[key][t.type] += t.amount;
+  });
+  const monthly = Object.values(map).sort((a,b)=>a.key.localeCompare(b.key)).slice(-6);
+  const maxVal = Math.max(1, ...monthly.flatMap(m=>[m.ingreso,m.gasto]));
+
+  const lowStock = state.inventory.filter(i=>i.minStock!=null && i.quantity<=i.minStock);
+
+  let html = `<div class="card"><div class="grid2">
+    <div><div class="stat-label">Balance</div><div class="stat-value ${balance>=0?'ok':'warn'}">${fmtCOP(balance)}</div></div>
+    <div><div class="stat-label">Valor inventario</div><div class="stat-value" style="color:var(--green)">${fmtCOP(valorInv)}</div></div>
+    <div><div class="stat-label ok">↑ Ingresos</div><div class="stat-value" style="font-size:15px">${fmtCOP(ingresos)}</div></div>
+    <div><div class="stat-label warn">↓ Gastos</div><div class="stat-value" style="font-size:15px">${fmtCOP(gastos)}</div></div>
+  </div></div>`;
+
+  if(monthly.length>0){
+    html += `<div class="card"><div style="font-weight:700;color:var(--green);margin-bottom:4px;font-size:14px">Ingresos vs. gastos (últimos meses)</div>
+    <div class="bars">${monthly.map(m=>`
+      <div class="bar-group">
+        <div class="bar-pair">
+          <div class="bar" style="height:${(m.ingreso/maxVal*120)||0}px;background:var(--olive)"></div>
+          <div class="bar" style="height:${(m.gasto/maxVal*120)||0}px;background:var(--brick)"></div>
+        </div>
+        <div style="font-size:10px;color:var(--ink-faint)">${m.label}</div>
+      </div>`).join("")}
+    </div>
+    <div style="display:flex;gap:14px;margin-top:8px;font-size:11px">
+      <span><span class="dot" style="background:var(--olive)"></span> Ingreso</span>
+      <span><span class="dot" style="background:var(--brick)"></span> Gasto</span>
+    </div></div>`;
+  }
+
+  if(lowStock.length>0){
+    html += `<div class="card" style="border-color:var(--brick-light)">
+      <div style="font-weight:700;color:var(--brick);margin-bottom:6px;font-size:14px">⚠️ Inventario bajo</div>
+      ${lowStock.map(i=>`<div class="row"><span>${i.name}</span><span class="mono">${i.quantity} ${i.unit}</span></div>`).join("")}
+    </div>`;
+  }
+
+  if(state.transactions.length===0 && state.inventory.length===0){
+    html += `<p class="empty">Aún no hay datos. Empieza registrando una cuenta o un ítem de inventario.</p>`;
+  }
+  return html;
+}
+
+// ---------- Cuentas ----------
+function viewCuentas(){
+  const e = state.editingTx;
+  const type = e ? e.type : (window._txType || "ingreso");
+  const cats = type==="ingreso" ? INCOME_CATS : EXPENSE_CATS;
+  let list = [...state.transactions];
+  if(state.filter!=="todos") list = list.filter(t=>t.type===state.filter);
+  list.sort((a,b)=>b.date.localeCompare(a.date));
+
+  return `
+  <div class="card">
+    <form id="tx-form">
+      <div class="toggle-type">
+        <button type="button" data-type="ingreso" class="${type==='ingreso'?'on-ingreso':''}">ingreso</button>
+        <button type="button" data-type="gasto" class="${type==='gasto'?'on-gasto':''}">gasto</button>
+      </div>
+      <div class="fields2">
+        <div class="field"><label>Categoría</label>
+          <select name="category">${cats.map(c=>`<option ${e&&e.category===c?'selected':''}>${c}</option>`).join("")}</select>
+        </div>
+        <div class="field"><label>Monto (COP)</label>
+          <input class="mono" type="number" min="0" step="1000" name="amount" value="${e?e.amount:''}" placeholder="0" required>
+        </div>
+      </div>
+      <div class="fields2">
+        <div class="field"><label>Fecha</label>
+          <input type="date" name="date" value="${e?e.date:todayISO()}" required>
+        </div>
+        <div class="field"><label>Nota (opcional)</label>
+          <input type="text" name="note" value="${e?(e.note||''):''}" placeholder="Detalle">
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        ${e?`<button type="button" class="btn btn-ghost" id="tx-cancel">Cancelar</button>`:""}
+        <button type="submit" class="btn ${e?'btn-ochre':'btn-green'}">${e?'Guardar cambios':'➕ Registrar'}</button>
+      </div>
+      <input type="hidden" name="type" value="${type}">
+      <input type="hidden" name="id" value="${e?e.id:''}">
+    </form>
+  </div>
+  <div class="filters no-print">
+    ${["todos","ingreso","gasto"].map(f=>`<button class="${state.filter===f?'active':''}" data-filter="${f}">${f}</button>`).join("")}
+  </div>
+  <div class="card">
+    ${list.length===0 ? `<p class="empty">Sin movimientos registrados.</p>` :
+      list.map(t=>`
+      <div class="row">
+        <div style="min-width:0">
+          <div style="font-weight:600;font-size:14px">${t.category}</div>
+          <div class="muted">${fmtDate(t.date)}${t.note?' · '+t.note:''}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          <span class="mono ${t.type==='ingreso'?'ok':'warn'}" style="font-weight:700;font-size:13px">${t.type==='ingreso'?'+':'−'}${fmtCOP(t.amount)}</span>
+          <button class="icon-btn" data-edit-tx="${t.id}">✎</button>
+          <button class="icon-btn" data-del-tx="${t.id}">✕</button>
+        </div>
+      </div>`).join("")}
+  </div>`;
+}
+
+// ---------- Inventario ----------
+function viewInventario(){
+  const e = state.editingInv;
+  const list = [...state.inventory].sort((a,b)=>a.name.localeCompare(b.name));
+  return `
+  <div class="card">
+    <form id="inv-form">
+      <div class="fields2">
+        <div class="field"><label>Nombre del ítem</label>
+          <input type="text" name="name" value="${e?e.name:''}" placeholder="Ej. Concentrado 18% proteína" required></div>
+        <div class="field"><label>Categoría</label>
+          <select name="category">${INV_CATS.map(c=>`<option ${e&&e.category===c?'selected':''}>${c}</option>`).join("")}</select></div>
+      </div>
+      <div class="fields3">
+        <div class="field"><label>Cantidad</label>
+          <input class="mono" type="number" step="0.01" name="quantity" value="${e?e.quantity:''}" required></div>
+        <div class="field"><label>Unidad</label>
+          <input type="text" name="unit" value="${e?e.unit:'kg'}" placeholder="kg, litros, cabezas..."></div>
+        <div class="field"><label>Valor unitario</label>
+          <input class="mono" type="number" step="100" name="unitValue" value="${e?e.unitValue:''}" required></div>
+      </div>
+      <div class="field"><label>Alertar si la cantidad es menor o igual a (opcional)</label>
+        <input class="mono" type="number" step="0.01" name="minStock" value="${e&&e.minStock!=null?e.minStock:''}" style="max-width:140px" placeholder="—"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        ${e?`<button type="button" class="btn btn-ghost" id="inv-cancel">Cancelar</button>`:""}
+        <button type="submit" class="btn ${e?'btn-ochre':'btn-green'}">${e?'Guardar cambios':'➕ Agregar'}</button>
+      </div>
+      <input type="hidden" name="id" value="${e?e.id:''}">
+    </form>
+  </div>
+  <div class="card">
+    ${list.length===0 ? `<p class="empty">Sin ítems en el inventario.</p>` :
+      list.map(i=>{
+        const low = i.minStock!=null && i.quantity<=i.minStock;
+        return `<div class="row">
+          <div style="min-width:0">
+            <div style="font-weight:600;font-size:14px">${low?'⚠️ ':''}${i.name}</div>
+            <div class="muted">${i.category} · ${fmtDate(i.lastUpdated)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+            <div style="text-align:right">
+              <div class="mono ${low?'warn':''}" style="font-weight:700;font-size:13px">${i.quantity} ${i.unit}</div>
+              <div class="mono muted">${fmtCOP(i.quantity*i.unitValue)}</div>
+            </div>
+            <button class="icon-btn" data-edit-inv="${i.id}">✎</button>
+            <button class="icon-btn" data-del-inv="${i.id}">✕</button>
+          </div>
+        </div>`;
+      }).join("")}
+  </div>`;
+}
+
+// ---------- Reportes ----------
+function viewReportes(){
+  const filtered = state.transactions.filter(t=>t.date>=state.repFrom && t.date<=state.repTo).sort((a,b)=>a.date.localeCompare(b.date));
+  const ingresos = filtered.filter(t=>t.type==="ingreso").reduce((s,t)=>s+t.amount,0);
+  const gastos = filtered.filter(t=>t.type==="gasto").reduce((s,t)=>s+t.amount,0);
+
+  const catMap = {};
+  filtered.filter(t=>t.type==="gasto").forEach(t=>{ catMap[t.category]=(catMap[t.category]||0)+t.amount; });
+  const catList = Object.entries(catMap).map(([name,value],i)=>({name,value,color:PIE_COLORS[i%PIE_COLORS.length]}));
+  const total = catList.reduce((s,c)=>s+c.value,0) || 1;
+  let acc = 0;
+  const gradient = catList.map(c=>{ const start=acc/total*360; acc+=c.value; const end=acc/total*360; return `${c.color} ${start}deg ${end}deg`; }).join(", ");
+
+  return `
+  <div class="card no-print">
+    <div class="fields2">
+      <div class="field"><label>Desde</label><input type="date" id="rep-from" value="${state.repFrom}"></div>
+      <div class="field"><label>Hasta</label><input type="date" id="rep-to" value="${state.repTo}"></div>
+    </div>
+    <div class="backup-row" style="margin-bottom:10px">
+      <button class="btn btn-ochre" id="export-csv">⬇ CSV (Excel)</button>
+      <button class="btn btn-green" onclick="window.print()">🖨 Imprimir / PDF</button>
+    </div>
+    <div style="border-top:1px solid var(--line);padding-top:10px">
+      <div style="font-weight:700;color:var(--green);margin-bottom:6px;font-size:13px">Respaldo para compartir con el dueño</div>
+      <div class="backup-row">
+        <button class="btn btn-green" id="export-backup">⬇ Exportar respaldo</button>
+        <label class="btn btn-ochre" style="cursor:pointer">⬆ Importar respaldo<input type="file" id="import-backup" accept=".json" style="display:none"></label>
+      </div>
+      <p class="muted" style="margin-top:8px">Envía el archivo de respaldo por WhatsApp o correo. Al importarlo, reemplaza todos los datos de este celular por los del archivo.</p>
+    </div>
+  </div>
+
+  <div class="card" id="print-area">
+    <div class="serif" style="font-size:17px;font-weight:700;color:var(--green)">Reporte de la finca</div>
+    <div class="muted" style="margin-bottom:10px">${fmtDate(state.repFrom)} — ${fmtDate(state.repTo)}</div>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><div class="stat-label ok">Ingresos</div><div class="mono" style="font-weight:700">${fmtCOP(ingresos)}</div></div>
+      <div><div class="stat-label warn">Gastos</div><div class="mono" style="font-weight:700">${fmtCOP(gastos)}</div></div>
+    </div>
+    ${catList.length>0?`
+    <div class="pie-wrap" style="margin-bottom:10px">
+      <div class="pie" style="background:conic-gradient(${gradient})"></div>
+      <div>${catList.map(c=>`<div class="legend-item"><span class="dot" style="background:${c.color}"></span>${c.name} — ${fmtCOP(c.value)}</div>`).join("")}</div>
+    </div>`:""}
+    <table>
+      <thead><tr><th>Fecha</th><th>Categoría</th><th style="text-align:right">Monto</th></tr></thead>
+      <tbody>
+        ${filtered.length===0? `<tr><td colspan="3" class="empty">Sin movimientos en este rango.</td></tr>` :
+          filtered.map(t=>`<tr><td>${fmtDate(t.date)}</td><td>${t.category}</td><td class="mono" style="text-align:right" class="${t.type==='ingreso'?'ok':'warn'}">${t.type==='ingreso'?'+':'−'}${fmtCOP(t.amount)}</td></tr>`).join("")}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+// ---------- Events ----------
+function bindEvents(){
+  const txForm = document.getElementById("tx-form");
+  if(txForm){
+    txForm.querySelectorAll("[data-type]").forEach(btn=>{
+      btn.addEventListener("click", ()=>{ window._txType = btn.dataset.type; render(); });
+    });
+    txForm.addEventListener("submit", (ev)=>{
+      ev.preventDefault();
+      const fd = new FormData(txForm);
+      const amt = parseFloat(fd.get("amount"));
+      if(!amt || amt<=0 || !fd.get("date")) return;
+      const rec = {
+        id: fd.get("id") || uid(),
+        type: fd.get("type"),
+        category: fd.get("category"),
+        amount: amt,
+        date: fd.get("date"),
+        note: (fd.get("note")||"").trim(),
+      };
+      const idx = state.transactions.findIndex(t=>t.id===rec.id);
+      if(idx>=0) state.transactions[idx]=rec; else state.transactions.push(rec);
+      state.editingTx = null; window._txType = null;
+      saveData(); render();
+    });
+    const cancel = document.getElementById("tx-cancel");
+    if(cancel) cancel.addEventListener("click", ()=>{ state.editingTx=null; window._txType=null; render(); });
+    txForm.querySelectorAll("[data-edit-tx]").forEach(b=>b.addEventListener("click",()=>{
+      state.editingTx = state.transactions.find(t=>t.id===b.dataset.editTx); render();
+    }));
+  }
+  document.querySelectorAll("[data-edit-tx]").forEach(b=>b.addEventListener("click",()=>{
+    state.editingTx = state.transactions.find(t=>t.id===b.dataset.editTx); render();
+  }));
+  document.querySelectorAll("[data-del-tx]").forEach(b=>b.addEventListener("click",()=>{
+    if(confirm("¿Eliminar este movimiento?")){
+      state.transactions = state.transactions.filter(t=>t.id!==b.dataset.delTx);
+      saveData(); render();
+    }
+  }));
+  document.querySelectorAll("[data-filter]").forEach(b=>b.addEventListener("click",()=>{
+    state.filter = b.dataset.filter; render();
+  }));
+
+  const invForm = document.getElementById("inv-form");
+  if(invForm){
+    invForm.addEventListener("submit",(ev)=>{
+      ev.preventDefault();
+      const fd = new FormData(invForm);
+      const q = parseFloat(fd.get("quantity"));
+      const uv = parseFloat(fd.get("unitValue"));
+      if(!fd.get("name") || isNaN(q) || isNaN(uv)) return;
+      const rec = {
+        id: fd.get("id") || uid(),
+        name: fd.get("name").trim(),
+        category: fd.get("category"),
+        quantity: q,
+        unit: (fd.get("unit")||"unidades").trim(),
+        unitValue: uv,
+        minStock: fd.get("minStock")===""?null:parseFloat(fd.get("minStock")),
+        lastUpdated: todayISO(),
+      };
+      const idx = state.inventory.findIndex(i=>i.id===rec.id);
+      if(idx>=0) state.inventory[idx]=rec; else state.inventory.push(rec);
+      state.editingInv = null;
+      saveData(); render();
+    });
+    const cancel = document.getElementById("inv-cancel");
+    if(cancel) cancel.addEventListener("click",()=>{ state.editingInv=null; render(); });
+  }
+  document.querySelectorAll("[data-edit-inv]").forEach(b=>b.addEventListener("click",()=>{
+    state.editingInv = state.inventory.find(i=>i.id===b.dataset.editInv); render();
+  }));
+  document.querySelectorAll("[data-del-inv]").forEach(b=>b.addEventListener("click",()=>{
+    if(confirm("¿Eliminar este ítem?")){
+      state.inventory = state.inventory.filter(i=>i.id!==b.dataset.delInv);
+      saveData(); render();
+    }
+  }));
+
+  const repFrom = document.getElementById("rep-from");
+  const repTo = document.getElementById("rep-to");
+  if(repFrom) repFrom.addEventListener("change",()=>{ state.repFrom=repFrom.value; render(); });
+  if(repTo) repTo.addEventListener("change",()=>{ state.repTo=repTo.value; render(); });
+
+  const exportCsv = document.getElementById("export-csv");
+  if(exportCsv) exportCsv.addEventListener("click", ()=>{
+    const filtered = state.transactions.filter(t=>t.date>=state.repFrom && t.date<=state.repTo);
+    let csv = "Fecha,Tipo,Categoria,Monto,Nota\n";
+    filtered.forEach(t=>{ csv += `${t.date},${t.type},"${t.category}",${t.amount},"${(t.note||'').replace(/"/g,'""')}"\n`; });
+    downloadFile(csv, `finca-cuentas-${state.repFrom}_a_${state.repTo}.csv`, "text/csv");
+  });
+
+  const exportBackup = document.getElementById("export-backup");
+  if(exportBackup) exportBackup.addEventListener("click", ()=>{
+    const payload = JSON.stringify({ transactions: state.transactions, inventory: state.inventory, exportedAt: new Date().toISOString() }, null, 2);
+    downloadFile(payload, `finca-respaldo-${todayISO()}.json`, "application/json");
+  });
+
+  const importBackup = document.getElementById("import-backup");
+  if(importBackup) importBackup.addEventListener("change",(ev)=>{
+    const file = ev.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try{
+        const parsed = JSON.parse(reader.result);
+        if(!confirm("Esto reemplazará todos los datos de este celular por los del archivo importado. ¿Continuar?")) return;
+        state.transactions = parsed.transactions || [];
+        state.inventory = parsed.inventory || [];
+        saveData(); render();
+        alert("Respaldo importado correctamente.");
+      }catch(e){
+        alert("El archivo no es un respaldo válido.");
+      }
+    };
+    reader.readAsText(file);
+  });
+}
+
+function downloadFile(content, filename, mime){
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+render();
+
+if("serviceWorker" in navigator){
+  window.addEventListener("load", ()=>{
+    navigator.serviceWorker.register("sw.js").catch(e=>console.error("SW error:", e));
+  });
+}
+</script>
+</body>
+</html>
