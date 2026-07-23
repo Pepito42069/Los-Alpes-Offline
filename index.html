@@ -115,10 +115,13 @@ function loadData(){
     const raw = localStorage.getItem(STORAGE_KEY);
     if(raw) return JSON.parse(raw);
   }catch(e){ console.error(e); }
-  return { transactions: [], inventory: [] };
+  return { transactions: [], inventory: [], cows: [], milkRecords: [] };
 }
 function saveData(){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ transactions: state.transactions, inventory: state.inventory }));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    transactions: state.transactions, inventory: state.inventory,
+    cows: state.cows, milkRecords: state.milkRecords,
+  }));
 }
 
 // ---------- State ----------
@@ -127,8 +130,11 @@ const state = {
   tab: "resumen",
   transactions: data0.transactions || [],
   inventory: data0.inventory || [],
+  cows: data0.cows || [],
+  milkRecords: data0.milkRecords || [],
   editingTx: null,
   editingInv: null,
+  editingMilk: null,
   filter: "todos",
   repFrom: (()=>{ const d=new Date(); d.setMonth(d.getMonth()-1); return d.toISOString().slice(0,10); })(),
   repTo: new Date().toISOString().slice(0,10),
@@ -155,12 +161,13 @@ function render(){
   if(state.tab==="resumen") app.innerHTML = viewResumen();
   else if(state.tab==="cuentas") app.innerHTML = viewCuentas();
   else if(state.tab==="inventario") app.innerHTML = viewInventario();
+  else if(state.tab==="produccion") app.innerHTML = viewProduccion();
   else if(state.tab==="reportes") app.innerHTML = viewReportes();
   bindEvents();
 }
 
 function renderNav(){
-  const tabs = [["resumen","📋 Resumen"],["cuentas","💰 Cuentas"],["inventario","📦 Inventario"],["reportes","📊 Reportes"]];
+  const tabs = [["resumen","📋 Resumen"],["cuentas","💰 Cuentas"],["inventario","📦 Inventario"],["produccion","🐄 Producción"],["reportes","📊 Reportes"]];
   document.getElementById("tabnav").innerHTML = tabs.map(([id,label])=>
     `<button class="${state.tab===id?'active':''}" onclick="setTab('${id}')">${label}</button>`
   ).join("");
@@ -333,6 +340,107 @@ function viewInventario(){
   </div>`;
 }
 
+// ---------- Producción de leche ----------
+function viewProduccion(){
+  const em = state.editingMilk;
+  const cows = state.cows;
+  const perCow = em ? em.perCow || {} : {};
+
+  const cowsBlock = cows.length===0
+    ? `<p class="muted" style="margin-bottom:8px">Agrega tus vacas para empezar a registrar litros por cada una.</p>`
+    : `<div style="margin-bottom:10px">${cows.map(c=>`
+        <div class="field" style="margin-bottom:6px">
+          <label>${c.name}</label>
+          <input class="mono" type="number" step="0.1" min="0" name="cow_${c.id}" value="${perCow[c.id]!=null?perCow[c.id]:''}" placeholder="Litros">
+        </div>`).join("")}</div>`;
+
+  const records = [...state.milkRecords].sort((a,b)=>b.date.localeCompare(a.date));
+  const recent = [...state.milkRecords].sort((a,b)=>a.date.localeCompare(b.date)).slice(-10);
+  const maxVal = Math.max(1, ...recent.flatMap(r=>[totalProducido(r), r.deliveredToMilkman]));
+
+  return `
+  <div class="card">
+    <div style="font-weight:700;color:var(--green);margin-bottom:8px;font-size:14px">🐄 Tus vacas</div>
+    <form id="cow-form" style="display:flex;gap:8px;margin-bottom:10px">
+      <input type="text" name="cowName" placeholder="Nombre o número de la vaca" style="flex:1">
+      <button type="submit" class="btn btn-green">➕</button>
+    </form>
+    ${cows.length>0 ? `<div style="display:flex;flex-wrap:wrap;gap:6px">
+      ${cows.map(c=>`<span style="display:inline-flex;align-items:center;gap:5px;background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12px">
+        ${c.name} <button class="icon-btn" style="padding:0" data-del-cow="${c.id}">✕</button>
+      </span>`).join("")}
+    </div>` : ""}
+  </div>
+
+  <div class="card">
+    <div style="font-weight:700;color:var(--green);margin-bottom:8px;font-size:14px">Registro diario</div>
+    <form id="milk-form">
+      <div class="field"><label>Fecha</label>
+        <input type="date" name="date" value="${em?em.date:todayISO()}" required></div>
+      ${cowsBlock}
+      <div class="fields3">
+        <div class="field"><label>Consumo en la finca (L)</label>
+          <input class="mono" type="number" step="0.1" min="0" name="farmConsumption" value="${em?em.farmConsumption:''}" placeholder="0"></div>
+        <div class="field"><label>Consumo terneros (L)</label>
+          <input class="mono" type="number" step="0.1" min="0" name="calfConsumption" value="${em?em.calfConsumption:''}" placeholder="0"></div>
+        <div class="field"><label>Se lleva el lechero (L)</label>
+          <input class="mono" type="number" step="0.1" min="0" name="deliveredToMilkman" value="${em?em.deliveredToMilkman:''}" placeholder="0"></div>
+      </div>
+      <div class="field"><label>Nota (opcional)</label>
+        <input type="text" name="note" value="${em?(em.note||''):''}" placeholder="Detalle"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        ${em?`<button type="button" class="btn btn-ghost" id="milk-cancel">Cancelar</button>`:""}
+        <button type="submit" class="btn ${em?'btn-ochre':'btn-green'}">${em?'Guardar cambios':'➕ Registrar día'}</button>
+      </div>
+      <input type="hidden" name="id" value="${em?em.id:''}">
+    </form>
+  </div>
+
+  ${recent.length>0?`
+  <div class="card">
+    <div style="font-weight:700;color:var(--green);margin-bottom:4px;font-size:14px">Producido vs. entregado al lechero (últimos días)</div>
+    <div class="bars">${recent.map(r=>`
+      <div class="bar-group">
+        <div class="bar-pair">
+          <div class="bar" style="height:${(totalProducido(r)/maxVal*120)||0}px;background:var(--olive)"></div>
+          <div class="bar" style="height:${(r.deliveredToMilkman/maxVal*120)||0}px;background:var(--ochre)"></div>
+        </div>
+        <div style="font-size:9px;color:var(--ink-faint)">${fmtDate(r.date).slice(0,6)}</div>
+      </div>`).join("")}
+    </div>
+    <div style="display:flex;gap:14px;margin-top:8px;font-size:11px">
+      <span><span class="dot" style="background:var(--olive)"></span> Producido</span>
+      <span><span class="dot" style="background:var(--ochre)"></span> Lechero</span>
+    </div>
+  </div>`:""}
+
+  <div class="card">
+    <div style="font-weight:700;color:var(--green);margin-bottom:4px;font-size:14px">Balance diario</div>
+    <p class="muted" style="margin-bottom:6px">Balance = producido − (consumo finca + terneros + lechero). Si no da cero, revisa la medición o pérdidas.</p>
+    ${records.length===0?`<p class="empty">Sin registros aún.</p>`:
+      records.map(r=>{
+        const prod = totalProducido(r);
+        const usado = r.farmConsumption + r.calfConsumption + r.deliveredToMilkman;
+        const bal = prod - usado;
+        return `<div class="row">
+          <div style="min-width:0">
+            <div style="font-weight:600;font-size:14px">${fmtDate(r.date)}</div>
+            <div class="muted">Producido ${prod.toFixed(1)} L · Finca ${r.farmConsumption} L · Terneros ${r.calfConsumption} L · Lechero ${r.deliveredToMilkman} L${r.note?' · '+r.note:''}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+            <span class="mono ${bal<0?'warn':'ok'}" style="font-weight:700;font-size:13px">${bal>=0?'+':''}${bal.toFixed(1)} L</span>
+            <button class="icon-btn" data-edit-milk="${r.id}">✎</button>
+            <button class="icon-btn" data-del-milk="${r.id}">✕</button>
+          </div>
+        </div>`;
+      }).join("")}
+  </div>`;
+}
+
+function totalProducido(record){
+  return Object.values(record.perCow || {}).reduce((s,v)=>s+(parseFloat(v)||0), 0);
+}
+
 // ---------- Reportes ----------
 function viewReportes(){
   const filtered = state.transactions.filter(t=>t.date>=state.repFrom && t.date<=state.repTo).sort((a,b)=>a.date.localeCompare(b.date));
@@ -468,6 +576,67 @@ function bindEvents(){
     }
   }));
 
+  const cowForm = document.getElementById("cow-form");
+  if(cowForm){
+    cowForm.addEventListener("submit",(ev)=>{
+      ev.preventDefault();
+      const fd = new FormData(cowForm);
+      const name = (fd.get("cowName")||"").trim();
+      if(!name) return;
+      state.cows.push({ id: uid(), name });
+      saveData(); render();
+    });
+  }
+  document.querySelectorAll("[data-del-cow]").forEach(b=>b.addEventListener("click",()=>{
+    if(confirm("¿Eliminar esta vaca? Sus litros ya registrados no se borran.")){
+      state.cows = state.cows.filter(c=>c.id!==b.dataset.delCow);
+      saveData(); render();
+    }
+  }));
+
+  const milkForm = document.getElementById("milk-form");
+  if(milkForm){
+    milkForm.addEventListener("submit",(ev)=>{
+      ev.preventDefault();
+      const fd = new FormData(milkForm);
+      const date = fd.get("date");
+      if(!date) return;
+      const perCow = {};
+      state.cows.forEach(c=>{
+        const v = fd.get("cow_"+c.id);
+        if(v!==null && v!=="") perCow[c.id] = parseFloat(v)||0;
+      });
+      const rec = {
+        id: fd.get("id") || uid(),
+        date,
+        perCow,
+        farmConsumption: parseFloat(fd.get("farmConsumption"))||0,
+        calfConsumption: parseFloat(fd.get("calfConsumption"))||0,
+        deliveredToMilkman: parseFloat(fd.get("deliveredToMilkman"))||0,
+        note: (fd.get("note")||"").trim(),
+      };
+      const editIdx = state.milkRecords.findIndex(r=>r.id===rec.id);
+      const dateIdx = state.milkRecords.findIndex(r=>r.date===rec.date && r.id!==rec.id);
+      if(editIdx>=0) state.milkRecords[editIdx]=rec;
+      else if(dateIdx>=0){
+        if(confirm("Ya existe un registro para esa fecha. ¿Reemplazarlo?")) state.milkRecords[dateIdx]=rec; else return;
+      } else state.milkRecords.push(rec);
+      state.editingMilk = null;
+      saveData(); render();
+    });
+    const cancel = document.getElementById("milk-cancel");
+    if(cancel) cancel.addEventListener("click",()=>{ state.editingMilk=null; render(); });
+  }
+  document.querySelectorAll("[data-edit-milk]").forEach(b=>b.addEventListener("click",()=>{
+    state.editingMilk = state.milkRecords.find(r=>r.id===b.dataset.editMilk); render();
+  }));
+  document.querySelectorAll("[data-del-milk]").forEach(b=>b.addEventListener("click",()=>{
+    if(confirm("¿Eliminar este registro diario?")){
+      state.milkRecords = state.milkRecords.filter(r=>r.id!==b.dataset.delMilk);
+      saveData(); render();
+    }
+  }));
+
   const repFrom = document.getElementById("rep-from");
   const repTo = document.getElementById("rep-to");
   if(repFrom) repFrom.addEventListener("change",()=>{ state.repFrom=repFrom.value; render(); });
@@ -483,7 +652,7 @@ function bindEvents(){
 
   const exportBackup = document.getElementById("export-backup");
   if(exportBackup) exportBackup.addEventListener("click", ()=>{
-    const payload = JSON.stringify({ transactions: state.transactions, inventory: state.inventory, exportedAt: new Date().toISOString() }, null, 2);
+    const payload = JSON.stringify({ transactions: state.transactions, inventory: state.inventory, cows: state.cows, milkRecords: state.milkRecords, exportedAt: new Date().toISOString() }, null, 2);
     downloadFile(payload, `finca-respaldo-${todayISO()}.json`, "application/json");
   });
 
@@ -498,6 +667,8 @@ function bindEvents(){
         if(!confirm("Esto reemplazará todos los datos de este celular por los del archivo importado. ¿Continuar?")) return;
         state.transactions = parsed.transactions || [];
         state.inventory = parsed.inventory || [];
+        state.cows = parsed.cows || [];
+        state.milkRecords = parsed.milkRecords || [];
         saveData(); render();
         alert("Respaldo importado correctamente.");
       }catch(e){

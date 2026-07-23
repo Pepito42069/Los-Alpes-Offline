@@ -1,4 +1,4 @@
-const CACHE_NAME = "finca-cache-v1";
+const CACHE_NAME = "finca-cache-v2";
 const ASSETS = ["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {
