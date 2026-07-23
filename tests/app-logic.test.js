@@ -4,7 +4,7 @@ import {
   uid, fmtCOP, fmtDate, monthLabel, todayISO,
   loadData, saveData,
   computeMonthly, computeSummary,
-  totalProducido, computeMilkBalance, computeMilkChartMax, findDuplicateMilkRecord,
+  totalProducido, computeDeliveredToMilkman, computeMilkBalance, computeMilkChartMax, findDuplicateMilkRecord,
   computeReport, buildTransactionsCsv, buildBackupPayload, parseBackupData,
   parseTransactionForm, parseInventoryForm, parseMilkForm,
 } from "../app-logic.js";
@@ -158,6 +158,15 @@ describe("totalProducido", () => {
   it("treats missing or non-numeric values as zero", () => {
     expect(totalProducido({ perCow: { a: "not-a-number", b: { am: "x", pm: null } } })).toBe(0);
     expect(totalProducido({})).toBe(0);
+  });
+});
+
+describe("computeDeliveredToMilkman", () => {
+  it("is producido minus farm and calf consumption", () => {
+    expect(computeDeliveredToMilkman(15, 2, 3)).toBe(10);
+  });
+  it("can go negative when consumption exceeds production", () => {
+    expect(computeDeliveredToMilkman(5, 3, 4)).toBe(-2);
   });
 });
 
@@ -357,15 +366,31 @@ describe("parseInventoryForm", () => {
 describe("parseMilkForm", () => {
   const cows = [{ id: "c1", name: "Lola" }, { id: "c2", name: "Manchas" }];
 
-  it("collects am/pm liters per cow and defaults consumption fields to zero", () => {
+  it("collects am/pm liters per cow, defaults consumption fields to zero, and derives deliveredToMilkman from producido", () => {
     const getValue = makeGetValue({ date: "2026-01-01", am_c1: "5", pm_c1: "3" });
     const { valid, record } = parseMilkForm(getValue, cows, true);
     expect(valid).toBe(true);
     expect(record.perCow).toEqual({ c1: { am: 5, pm: 3 } });
     expect(record.farmConsumption).toBe(0);
     expect(record.calfConsumption).toBe(0);
-    expect(record.deliveredToMilkman).toBe(0);
+    expect(record.deliveredToMilkman).toBe(8);
     expect(record.hasCalves).toBe(true);
+  });
+
+  it("derives deliveredToMilkman as producido minus farm and calf consumption", () => {
+    const getValue = makeGetValue({
+      date: "2026-01-01", am_c1: "6", pm_c1: "4", farmConsumption: "2", calfConsumption: "3",
+    });
+    const { record } = parseMilkForm(getValue, cows, true);
+    expect(record.deliveredToMilkman).toBe(5);
+  });
+
+  it("ignores calfConsumption when deriving deliveredToMilkman if there are no calves", () => {
+    const getValue = makeGetValue({
+      date: "2026-01-01", am_c1: "6", pm_c1: "4", farmConsumption: "2", calfConsumption: "3",
+    });
+    const { record } = parseMilkForm(getValue, cows, false);
+    expect(record.deliveredToMilkman).toBe(8);
   });
 
   it("includes a cow if only one of am/pm was entered", () => {
