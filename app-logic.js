@@ -93,7 +93,8 @@ export function computeSummary(state){
 
 // ---------- Producción de leche ----------
 // perCow values are either { am, pm } (two ordeños) or, for records created
-// before that feature existed, a plain number for the whole day.
+// before that feature existed, a plain number for the whole day (counted as
+// the morning ordeño for lack of a real split).
 export function totalProducido(record){
   return Object.values(record.perCow || {}).reduce((s,v)=>{
     if(v && typeof v === "object") return s + (parseFloat(v.am)||0) + (parseFloat(v.pm)||0);
@@ -101,22 +102,20 @@ export function totalProducido(record){
   }, 0);
 }
 
-// The amount delivered to the milkman is not entered by hand; it's derived
-// so the daily balance is zero by construction (any losses show up as a
-// discrepancy the farmer has to go re-check, not as slack in this field).
-export function computeDeliveredToMilkman(producido, farmConsumption, calfConsumption){
-  return producido - farmConsumption - calfConsumption;
-}
-
-export function computeMilkBalance(record){
-  const producido = totalProducido(record);
-  const calf = record.hasCalves===false ? 0 : record.calfConsumption;
-  const usado = record.farmConsumption + calf + record.deliveredToMilkman;
-  return { producido, usado, balance: producido - usado };
+export function totalProducidoByOrdeno(record){
+  return Object.values(record.perCow || {}).reduce((acc,v)=>{
+    if(v && typeof v === "object"){
+      acc.am += parseFloat(v.am)||0;
+      acc.pm += parseFloat(v.pm)||0;
+    } else {
+      acc.am += parseFloat(v)||0;
+    }
+    return acc;
+  }, { am: 0, pm: 0 });
 }
 
 export function computeMilkChartMax(records){
-  return Math.max(1, ...records.flatMap(r=>[totalProducido(r), r.deliveredToMilkman]));
+  return Math.max(1, ...records.flatMap(r=>{ const { am, pm } = totalProducidoByOrdeno(r); return [am, pm]; }));
 }
 
 export function findDuplicateMilkRecord(milkRecords, record){
@@ -227,7 +226,6 @@ export function parseMilkForm(getValue, cows, hasCalves = true){
   });
   const farmConsumption = parseFloat(getValue("farmConsumption"))||0;
   const calfConsumption = hasCalves ? (parseFloat(getValue("calfConsumption"))||0) : 0;
-  const producido = totalProducido({ perCow });
   return {
     valid: true,
     record: {
@@ -237,7 +235,6 @@ export function parseMilkForm(getValue, cows, hasCalves = true){
       farmConsumption,
       calfConsumption,
       hasCalves,
-      deliveredToMilkman: computeDeliveredToMilkman(producido, farmConsumption, calfConsumption),
       note: (getValue("note")||"").trim(),
     },
   };
