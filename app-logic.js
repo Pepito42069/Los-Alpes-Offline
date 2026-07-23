@@ -235,7 +235,73 @@ export function parseMilkForm(getValue, cows, hasCalves = true){
       farmConsumption,
       calfConsumption,
       hasCalves,
+      deliveredToMilkman: parseFloat(getValue("deliveredToMilkman"))||0,
+      pricePerLiter: parseFloat(getValue("pricePerLiter"))||0,
       note: (getValue("note")||"").trim(),
     },
   };
+}
+
+export function parseCowForm(fields){
+  const name = (fields.name||"").trim();
+  if(!name) return { valid:false };
+  const weight = fields.weight===""||fields.weight==null ? null : parseFloat(fields.weight);
+  return {
+    valid: true,
+    record: {
+      id: fields.id || uid(),
+      name,
+      weight: weight!=null && !isNaN(weight) ? weight : null,
+      lastCalvingDate: fields.lastCalvingDate || null,
+      healthNotes: (fields.healthNotes||"").trim(),
+    },
+  };
+}
+
+// ---------- Producción ↔ Cuentas ----------
+// The "Venta de leche" transaction generated from a milk record is keyed off
+// the record's own id, so re-saving the record updates that same transaction
+// instead of creating a duplicate, and deleting the record removes it.
+export const milkTransactionId = (milkRecordId) => "milk-" + milkRecordId;
+
+export function getLastMilkPrice(milkRecords){
+  const withPrice = milkRecords.filter(r => typeof r.pricePerLiter === "number" && r.pricePerLiter > 0);
+  if(withPrice.length === 0) return null;
+  return [...withPrice].sort((a,b)=>a.date.localeCompare(b.date)).pop().pricePerLiter;
+}
+
+// Returns the transaction the milk record should generate, or null if it
+// doesn't qualify (needs both delivered liters and a price above zero).
+export function computeMilkSaleTransaction(record){
+  const delivered = record.deliveredToMilkman;
+  const price = record.pricePerLiter;
+  if(!(delivered > 0) || !(price > 0)) return null;
+  return {
+    id: milkTransactionId(record.id),
+    type: "ingreso",
+    category: "Venta de leche",
+    amount: delivered * price,
+    date: record.date,
+    note: "Generado automáticamente desde producción de leche",
+  };
+}
+
+// Keeps the linked transaction in sync with the milk record: creates it,
+// updates it in place, or removes it if the record no longer qualifies.
+export function syncMilkSaleTransaction(transactions, record){
+  const id = milkTransactionId(record.id);
+  const linked = computeMilkSaleTransaction(record);
+  const idx = transactions.findIndex(t => t.id === id);
+  if(!linked) return idx>=0 ? transactions.filter(t=>t.id!==id) : transactions;
+  if(idx>=0){
+    const next = transactions.slice();
+    next[idx] = linked;
+    return next;
+  }
+  return [...transactions, linked];
+}
+
+export function removeMilkSaleTransaction(transactions, milkRecordId){
+  const id = milkTransactionId(milkRecordId);
+  return transactions.filter(t => t.id !== id);
 }
