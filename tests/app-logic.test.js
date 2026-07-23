@@ -6,7 +6,9 @@ import {
   computeMonthly, computeSummary,
   totalProducido, totalProducidoByOrdeno, computeMilkChartMax, findDuplicateMilkRecord,
   computeReport, buildTransactionsCsv, buildBackupPayload, parseBackupData,
-  parseTransactionForm, parseInventoryForm, parseMilkForm,
+  parseTransactionForm, parseInventoryForm, parseMilkForm, parseCowForm,
+  milkTransactionId, getLastMilkPrice, computeMilkSaleTransaction,
+  syncMilkSaleTransaction, removeMilkSaleTransaction,
 } from "../app-logic.js";
 
 function makeFakeStorage(){
@@ -480,7 +482,7 @@ describe("parseInventoryForm", () => {
 describe("parseMilkForm", () => {
   const cows = [{ id: "c1", name: "Lola" }, { id: "c2", name: "Manchas" }];
 
-  it("collects am/pm liters per cow and defaults consumption fields to zero", () => {
+  it("collects am/pm liters per cow and defaults consumption/sale fields to zero", () => {
     const getValue = makeGetValue({ date: "2026-01-01", am_c1: "5", pm_c1: "3" });
     const { valid, record } = parseMilkForm(getValue, cows, true);
     expect(valid).toBe(true);
@@ -488,7 +490,15 @@ describe("parseMilkForm", () => {
     expect(record.farmConsumption).toBe(0);
     expect(record.calfConsumption).toBe(0);
     expect(record.hasCalves).toBe(true);
-    expect(record).not.toHaveProperty("deliveredToMilkman");
+    expect(record.deliveredToMilkman).toBe(0);
+    expect(record.pricePerLiter).toBe(0);
+  });
+
+  it("parses deliveredToMilkman and pricePerLiter when provided", () => {
+    const getValue = makeGetValue({ date: "2026-01-01", deliveredToMilkman: "18", pricePerLiter: "2000" });
+    const { record } = parseMilkForm(getValue, cows, true);
+    expect(record.deliveredToMilkman).toBe(18);
+    expect(record.pricePerLiter).toBe(2000);
   });
 
   it("ignores calfConsumption when there are no calves", () => {
@@ -535,5 +545,129 @@ describe("parseMilkForm", () => {
     const { record } = parseMilkForm(getValue, cows);
     expect(record.hasCalves).toBe(true);
     expect(record.calfConsumption).toBe(7);
+  });
+});
+
+describe("parseCowForm", () => {
+  it("accepts a name-only submission with everything else defaulting to null/empty", () => {
+    const { valid, record } = parseCowForm({ name: "  Lola  " });
+    expect(valid).toBe(true);
+    expect(record.name).toBe("Lola");
+    expect(record.weight).toBeNull();
+    expect(record.lastCalvingDate).toBeNull();
+    expect(record.healthNotes).toBe("");
+  });
+
+  it("accepts weight, last calving date, and health notes", () => {
+    const { record } = parseCowForm({
+      name: "Manchas", weight: "410.5", lastCalvingDate: "2026-05-01", healthNotes: "  cojea de la pata trasera  ",
+    });
+    expect(record.weight).toBe(410.5);
+    expect(record.lastCalvingDate).toBe("2026-05-01");
+    expect(record.healthNotes).toBe("cojea de la pata trasera");
+  });
+
+  it("is invalid without a name", () => {
+    expect(parseCowForm({ name: "" }).valid).toBe(false);
+    expect(parseCowForm({ name: "   " }).valid).toBe(false);
+  });
+
+  it("treats an empty or non-numeric weight as null rather than NaN", () => {
+    expect(parseCowForm({ name: "Lola", weight: "" }).record.weight).toBeNull();
+    expect(parseCowForm({ name: "Lola", weight: "abc" }).record.weight).toBeNull();
+  });
+
+  it("preserves an existing id when editing", () => {
+    const { record } = parseCowForm({ id: "existing-id", name: "Lola" });
+    expect(record.id).toBe("existing-id");
+  });
+});
+
+describe("milk production ↔ accounts linking", () => {
+  describe("milkTransactionId", () => {
+    it("derives a stable id from the milk record's id", () => {
+      expect(milkTransactionId("abc123")).toBe("milk-abc123");
+    });
+  });
+
+  describe("getLastMilkPrice", () => {
+    it("returns null when no record has a price set", () => {
+      expect(getLastMilkPrice([{ date: "2026-01-01" }, { date: "2026-01-02", pricePerLiter: 0 }])).toBeNull();
+    });
+
+    it("returns the price of the most recent record (by date) that has one", () => {
+      const records = [
+        { date: "2026-01-01", pricePerLiter: 1800 },
+        { date: "2026-01-03", pricePerLiter: 2000 },
+        { date: "2026-01-02", pricePerLiter: 1900 },
+      ];
+      expect(getLastMilkPrice(records)).toBe(2000);
+    });
+  });
+
+  describe("computeMilkSaleTransaction", () => {
+    it("returns null if delivered liters or price is missing/zero", () => {
+      expect(computeMilkSaleTransaction({ id: "1", date: "2026-01-01", deliveredToMilkman: 0, pricePerLiter: 2000 })).toBeNull();
+      expect(computeMilkSaleTransaction({ id: "1", date: "2026-01-01", deliveredToMilkman: 10, pricePerLiter: 0 })).toBeNull();
+      expect(computeMilkSaleTransaction({ id: "1", date: "2026-01-01" })).toBeNull();
+    });
+
+    it("computes an ingreso transaction for delivered liters × price", () => {
+      const tx = computeMilkSaleTransaction({ id: "rec1", date: "2026-01-05", deliveredToMilkman: 20, pricePerLiter: 1500 });
+      expect(tx).toEqual({
+        id: "milk-rec1",
+        type: "ingreso",
+        category: "Venta de leche",
+        amount: 30000,
+        date: "2026-01-05",
+        note: "Generado automáticamente desde producción de leche",
+      });
+    });
+  });
+
+  describe("syncMilkSaleTransaction", () => {
+    it("appends a new linked transaction when the record newly qualifies", () => {
+      const record = { id: "rec1", date: "2026-01-05", deliveredToMilkman: 10, pricePerLiter: 2000 };
+      const result = syncMilkSaleTransaction([], record);
+      expect(result).toEqual([computeMilkSaleTransaction(record)]);
+    });
+
+    it("updates the existing linked transaction in place instead of duplicating it", () => {
+      const record = { id: "rec1", date: "2026-01-05", deliveredToMilkman: 10, pricePerLiter: 2000 };
+      const other = { id: "manual-tx", type: "gasto", category: "Transporte", amount: 5000, date: "2026-01-01" };
+      const first = syncMilkSaleTransaction([other], record);
+      const updatedRecord = { ...record, deliveredToMilkman: 15 };
+      const second = syncMilkSaleTransaction(first, updatedRecord);
+      expect(second).toHaveLength(2);
+      const linked = second.find(t => t.id === "milk-rec1");
+      expect(linked.amount).toBe(30000);
+      expect(second).toContainEqual(other);
+    });
+
+    it("removes the linked transaction if the record no longer qualifies", () => {
+      const record = { id: "rec1", date: "2026-01-05", deliveredToMilkman: 10, pricePerLiter: 2000 };
+      const withLinked = syncMilkSaleTransaction([], record);
+      const noLongerQualifies = { ...record, pricePerLiter: 0 };
+      expect(syncMilkSaleTransaction(withLinked, noLongerQualifies)).toEqual([]);
+    });
+
+    it("leaves other transactions untouched when there's nothing to link", () => {
+      const other = { id: "manual-tx", type: "gasto", category: "Transporte", amount: 5000, date: "2026-01-01" };
+      const record = { id: "rec1", date: "2026-01-05", deliveredToMilkman: 0, pricePerLiter: 0 };
+      expect(syncMilkSaleTransaction([other], record)).toEqual([other]);
+    });
+  });
+
+  describe("removeMilkSaleTransaction", () => {
+    it("removes only the transaction linked to the given milk record id", () => {
+      const linked = { id: "milk-rec1", type: "ingreso", category: "Venta de leche", amount: 1000, date: "2026-01-01" };
+      const other = { id: "manual-tx", type: "gasto", category: "Transporte", amount: 500, date: "2026-01-01" };
+      expect(removeMilkSaleTransaction([linked, other], "rec1")).toEqual([other]);
+    });
+
+    it("is a no-op if there's no linked transaction", () => {
+      const other = { id: "manual-tx", type: "gasto", category: "Transporte", amount: 500, date: "2026-01-01" };
+      expect(removeMilkSaleTransaction([other], "rec1")).toEqual([other]);
+    });
   });
 });

@@ -1,4 +1,4 @@
-const CACHE_NAME = "finca-cache-v7";
+const CACHE_NAME = "finca-cache-v8";
 const ASSETS = ["./", "./index.html", "./app-logic.js", "./manifest.json", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {

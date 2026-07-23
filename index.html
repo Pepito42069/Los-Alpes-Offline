@@ -170,11 +170,12 @@
 <script type="module">
 import {
   INCOME_CATS, EXPENSE_CATS, INV_CATS, UNIT_OPTIONS,
-  uid, fmtCOP, fmtDate, monthLabel, todayISO, escapeHtml as esc,
+  fmtCOP, fmtDate, monthLabel, todayISO, escapeHtml as esc,
   loadData, saveData,
   computeSummary, totalProducidoByOrdeno, computeMilkChartMax,
   findDuplicateMilkRecord, computeReport, buildTransactionsCsv, buildBackupPayload,
-  parseBackupData, parseTransactionForm, parseInventoryForm, parseMilkForm,
+  parseBackupData, parseTransactionForm, parseInventoryForm, parseMilkForm, parseCowForm,
+  getLastMilkPrice, syncMilkSaleTransaction, removeMilkSaleTransaction,
 } from "./app-logic.js";
 
 // ---------- State ----------
@@ -188,6 +189,7 @@ const state = {
   editingTx: null,
   editingInv: null,
   editingMilk: null,
+  editingCow: null,
   filter: "todos",
   repFrom: (()=>{ const d=new Date(); d.setMonth(d.getMonth()-1); return d.toISOString().slice(0,10); })(),
   repTo: new Date().toISOString().slice(0,10),
@@ -371,9 +373,11 @@ function viewInventario(){
 // ---------- Producción de leche ----------
 function viewProduccion(){
   const em = state.editingMilk;
+  const ec = state.editingCow;
   const cows = state.cows;
   const perCow = em ? em.perCow || {} : {};
   const hasCalves = window._hasCalves !== false;
+  const lastMilkPrice = getLastMilkPrice(state.milkRecords);
 
   const cowsBlock = cows.length===0
     ? `<p class="muted" style="margin-bottom:8px">Agrega tus vacas para empezar a registrar litros por cada una.</p>`
@@ -403,15 +407,43 @@ function viewProduccion(){
   return `
   <div class="card">
     <div style="font-weight:700;color:var(--green);margin-bottom:8px;font-size:14px">🐄 Tus vacas</div>
-    <form id="cow-form" style="display:flex;gap:8px;margin-bottom:10px">
-      <input type="text" name="cowName" placeholder="Nombre o número de la vaca" style="flex:1">
-      <button type="submit" class="btn btn-green">➕</button>
+    <form id="cow-form">
+      <div class="fields2">
+        <div class="field"><label>Nombre o número</label>
+          <input type="text" name="name" value="${ec?esc(ec.name):''}" placeholder="Ej. Lola" required></div>
+        <div class="field"><label>Peso (kg, opcional)</label>
+          <input class="mono" type="number" step="0.1" min="0" name="weight" value="${ec&&ec.weight!=null?esc(ec.weight):''}" placeholder="—"></div>
+      </div>
+      <div class="fields2">
+        <div class="field"><label>Último parto (opcional)</label>
+          <input type="date" name="lastCalvingDate" value="${ec&&ec.lastCalvingDate?esc(ec.lastCalvingDate):''}"></div>
+        <div class="field"><label>Notas de salud (opcional)</label>
+          <input type="text" name="healthNotes" value="${ec?esc(ec.healthNotes||''):''}" placeholder="Ej. vacunada, cojea..."></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        ${ec?`<button type="button" class="btn btn-ghost" id="cow-cancel">Cancelar</button>`:""}
+        <button type="submit" class="btn ${ec?'btn-ochre':'btn-green'}">${ec?'Guardar cambios':'➕ Agregar vaca'}</button>
+      </div>
+      <input type="hidden" name="id" value="${ec?esc(ec.id):''}">
     </form>
-    ${cows.length>0 ? `<div style="display:flex;flex-wrap:wrap;gap:6px">
-      ${cows.map(c=>`<span style="display:inline-flex;align-items:center;gap:5px;background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12px">
-        ${esc(c.name)} <button class="icon-btn" style="padding:0" data-del-cow="${esc(c.id)}">✕</button>
-      </span>`).join("")}
-    </div>` : ""}
+    ${cows.length===0 ? `<p class="empty" style="padding:16px 0">Aún no has agregado vacas.</p>` :
+      `<div style="margin-top:8px">${cows.map(c=>{
+        const details = [
+          c.weight!=null ? `${esc(c.weight)} kg` : null,
+          c.lastCalvingDate ? `Parto: ${fmtDate(c.lastCalvingDate)}` : null,
+          c.healthNotes ? esc(c.healthNotes) : null,
+        ].filter(Boolean).join(' · ') || 'Sin datos adicionales';
+        return `<div class="row">
+          <div style="min-width:0">
+            <div style="font-weight:600;font-size:14px">${esc(c.name)}</div>
+            <div class="muted">${details}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+            <button class="icon-btn" data-edit-cow="${esc(c.id)}">✎</button>
+            <button class="icon-btn" data-del-cow="${esc(c.id)}">✕</button>
+          </div>
+        </div>`;
+      }).join("")}</div>`}
   </div>
 
   <div class="card">
@@ -428,6 +460,13 @@ function viewProduccion(){
       </label>
       ${hasCalves?`<div class="field"><label>Consumo terneros (L)</label>
         <input class="mono" type="number" step="0.1" min="0" name="calfConsumption" value="${em?esc(em.calfConsumption):''}" placeholder="0"></div>`:""}
+      <div class="fields2">
+        <div class="field"><label>Litros entregados al lechero (L)</label>
+          <input class="mono" type="number" step="0.1" min="0" name="deliveredToMilkman" value="${em?esc(em.deliveredToMilkman||''):''}" placeholder="0"></div>
+        <div class="field"><label>Precio por litro (COP)</label>
+          <input class="mono" type="number" step="50" min="0" name="pricePerLiter" value="${em?esc(em.pricePerLiter||''):(lastMilkPrice!=null?esc(lastMilkPrice):'')}" placeholder="0"></div>
+      </div>
+      <p class="muted" style="margin-top:-6px;margin-bottom:10px">Si registras litros y precio, se genera automáticamente una venta de leche en Cuentas.</p>
       <div class="field"><label>Nota (opcional)</label>
         <input type="text" name="note" value="${em?esc(em.note||''):''}" placeholder="Detalle"></div>
       <div style="display:flex;justify-content:flex-end;gap:8px">
@@ -464,10 +503,19 @@ function viewProduccion(){
     ${records.length===0?`<p class="empty">Sin registros aún.</p>`:
       records.map(r=>{
         const { am, pm } = totalProducidoByOrdeno(r);
+        const parts = [
+          `Mañana ${am.toFixed(1)} L`,
+          `Tarde ${pm.toFixed(1)} L`,
+          `Finca ${esc(r.farmConsumption)} L`,
+        ];
+        if(r.hasCalves !== false) parts.push(`Terneros ${esc(r.calfConsumption)} L`);
+        if(r.deliveredToMilkman > 0) parts.push(`Lechero ${esc(r.deliveredToMilkman)} L`);
+        if(r.deliveredToMilkman > 0 && r.pricePerLiter > 0) parts.push(`Venta ${fmtCOP(r.deliveredToMilkman * r.pricePerLiter)}`);
+        if(r.note) parts.push(esc(r.note));
         return `<div class="row">
           <div style="min-width:0">
             <div style="font-weight:600;font-size:14px">${fmtDate(r.date)}</div>
-            <div class="muted">Mañana ${am.toFixed(1)} L · Tarde ${pm.toFixed(1)} L · Finca ${esc(r.farmConsumption)} L${r.hasCalves===false?'':' · Terneros '+esc(r.calfConsumption)+' L'}${r.note?' · '+esc(r.note):''}</div>
+            <div class="muted">${parts.join(' · ')}</div>
           </div>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
             <button class="icon-btn" data-edit-milk="${esc(r.id)}">✎</button>
@@ -594,12 +642,22 @@ function bindEvents(){
     cowForm.addEventListener("submit",(ev)=>{
       ev.preventDefault();
       const fd = new FormData(cowForm);
-      const name = (fd.get("cowName")||"").trim();
-      if(!name) return;
-      state.cows.push({ id: uid(), name });
+      const { valid, record: rec } = parseCowForm({
+        id: fd.get("id"), name: fd.get("name"), weight: fd.get("weight"),
+        lastCalvingDate: fd.get("lastCalvingDate"), healthNotes: fd.get("healthNotes"),
+      });
+      if(!valid) return;
+      const idx = state.cows.findIndex(c=>c.id===rec.id);
+      if(idx>=0) state.cows[idx]=rec; else state.cows.push(rec);
+      state.editingCow = null;
       saveData(localStorage, state); render();
     });
+    const cancel = document.getElementById("cow-cancel");
+    if(cancel) cancel.addEventListener("click",()=>{ state.editingCow=null; render(); });
   }
+  document.querySelectorAll("[data-edit-cow]").forEach(b=>b.addEventListener("click",()=>{
+    state.editingCow = state.cows.find(c=>c.id===b.dataset.editCow); render();
+  }));
   document.querySelectorAll("[data-del-cow]").forEach(b=>b.addEventListener("click",()=>{
     if(confirm("¿Eliminar esta vaca? Sus litros ya registrados no se borran.")){
       state.cows = state.cows.filter(c=>c.id!==b.dataset.delCow);
@@ -626,11 +684,13 @@ function bindEvents(){
         const dup = findDuplicateMilkRecord(state.milkRecords, rec);
         if(dup){
           if(!confirm("Ya existe un registro para esa fecha. ¿Reemplazarlo?")) return;
+          rec.id = dup.id; // keep the same identity so any linked "Venta de leche" transaction stays in sync
           state.milkRecords[state.milkRecords.indexOf(dup)] = rec;
         } else {
           state.milkRecords.push(rec);
         }
       }
+      state.transactions = syncMilkSaleTransaction(state.transactions, rec);
       state.editingMilk = null;
       saveData(localStorage, state); render();
     });
@@ -643,8 +703,9 @@ function bindEvents(){
     render();
   }));
   document.querySelectorAll("[data-del-milk]").forEach(b=>b.addEventListener("click",()=>{
-    if(confirm("¿Eliminar este registro diario?")){
+    if(confirm("¿Eliminar este registro diario? También se eliminará la venta de leche generada, si existe.")){
       state.milkRecords = state.milkRecords.filter(r=>r.id!==b.dataset.delMilk);
+      state.transactions = removeMilkSaleTransaction(state.transactions, b.dataset.delMilk);
       saveData(localStorage, state); render();
     }
   }));
