@@ -106,6 +106,24 @@ describe("sanitizeAppData", () => {
     ]);
   });
 
+  it("requires date to actually look like YYYY-MM-DD, not just any string", () => {
+    const data = {
+      transactions: [
+        { id: "ok", type: "ingreso", amount: 100, date: "2026-01-01" },
+        { id: "not-a-date", type: "ingreso", amount: 100, date: "not-a-date" },
+        { id: "formula", type: "ingreso", amount: 100, date: "=cmd|'/c calc'!A1" },
+      ],
+      milkRecords: [
+        { id: "ok", date: "2026-01-01" },
+        { id: "bad", date: "07/23/2026" },
+      ],
+    };
+    expect(sanitizeAppData(data).transactions).toEqual([
+      { id: "ok", type: "ingreso", amount: 100, date: "2026-01-01" },
+    ]);
+    expect(sanitizeAppData(data).milkRecords).toEqual([{ id: "ok", date: "2026-01-01" }]);
+  });
+
   it("drops inventory items missing a name or numeric quantity/unitValue", () => {
     const data = {
       inventory: [
@@ -370,6 +388,13 @@ describe("buildTransactionsCsv", () => {
     ]);
     expect(csv).toContain('"cost=high"');
   });
+
+  it("neutralizes a date field too, since an imported backup only guarantees it's a string", () => {
+    const csv = buildTransactionsCsv([
+      { date: "=cmd|'/c calc'!A1", type: "gasto", category: "Transporte", amount: 20, note: "" },
+    ]);
+    expect(csv.split("\n")[1].startsWith("'=cmd")).toBe(true);
+  });
 });
 
 describe("buildBackupPayload / parseBackupData", () => {
@@ -446,7 +471,7 @@ describe("parseInventoryForm", () => {
     }, "2026-07-23");
     expect(valid).toBe(true);
     expect(record.name).toBe("Sal mineral");
-    expect(record.unit).toBe("unidades");
+    expect(record.unit).toBe("Cantidad");
     expect(record.minStock).toBeNull();
     expect(record.lastUpdated).toBe("2026-07-23");
   });
@@ -454,6 +479,11 @@ describe("parseInventoryForm", () => {
   it("parses a provided minStock", () => {
     const { record } = parseInventoryForm({ name: "Sal", category: "x", quantity: "5", unitValue: "10", minStock: "2" });
     expect(record.minStock).toBe(2);
+  });
+
+  it("keeps a selected unit as-is", () => {
+    const { record } = parseInventoryForm({ name: "Leche", category: "x", quantity: "5", unitValue: "10", unit: "Litros" });
+    expect(record.unit).toBe("Litros");
   });
 
   it.each([

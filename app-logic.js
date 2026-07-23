@@ -6,6 +6,7 @@ export const STORAGE_KEY = "finca-offline-data-v1";
 export const INCOME_CATS = ["Venta de leche","Venta de ganado de levante","Venta de terneros","Venta de descarte","Otros ingresos"];
 export const EXPENSE_CATS = ["Concentrado y sales","Veterinario y medicamentos","Mano de obra","Pastos y potreros","Transporte","Mantenimiento","Otros gastos"];
 export const INV_CATS = ["Concentrado y sales","Medicamentos veterinarios","Insumos de ordeño","Ganado (lotes)","Herramientas y equipo"];
+export const UNIT_OPTIONS = ["Cantidad","Litros","Mililitros","Kilos"];
 export const PIE_COLORS = ["#9A3324","#B8791F","#5C7A4B","#3B5940","#C9584A","#7E9C6C"];
 
 export const uid = () => Math.random().toString(36).slice(2,10);
@@ -23,6 +24,11 @@ export const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (ch
 
 // ---------- Storage ----------
 const isPlainRecord = (x) => !!x && typeof x === "object" && !Array.isArray(x);
+// Require an actual YYYY-MM-DD shape, not just any string — computeReport's
+// date-range filter and computeMonthly's grouping both rely on ISO-format
+// lexicographic ordering, and a non-date string here can also carry a CSV
+// formula-injection payload straight into exported reports.
+const isIsoDate = (x) => typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x);
 
 // Guards against malformed/malicious data (corrupted localStorage, a hand-edited
 // or crafted backup file) crashing the app later — e.g. computeMonthly does
@@ -34,7 +40,7 @@ export function sanitizeAppData(data){
   const milkRecords = Array.isArray(data?.milkRecords) ? data.milkRecords : [];
   return {
     transactions: transactions.filter(t =>
-      isPlainRecord(t) && typeof t.date === "string" &&
+      isPlainRecord(t) && isIsoDate(t.date) &&
       (t.type === "ingreso" || t.type === "gasto") &&
       typeof t.amount === "number" && isFinite(t.amount)
     ),
@@ -44,7 +50,7 @@ export function sanitizeAppData(data){
       typeof i.unitValue === "number" && isFinite(i.unitValue)
     ),
     cows: cows.filter(c => isPlainRecord(c) && typeof c.name === "string"),
-    milkRecords: milkRecords.filter(r => isPlainRecord(r) && typeof r.date === "string"),
+    milkRecords: milkRecords.filter(r => isPlainRecord(r) && isIsoDate(r.date)),
   };
 }
 
@@ -146,9 +152,12 @@ const sanitizeCsvField = (value) => {
 export function buildTransactionsCsv(transactions){
   let csv = "Fecha,Tipo,Categoria,Monto,Nota\n";
   transactions.forEach(t=>{
+    // date isn't guaranteed to actually look like a date — sanitizeAppData only
+    // checks it's a string, so an imported backup could carry a formula there too.
+    const date = sanitizeCsvField(t.date);
     const category = sanitizeCsvField(t.category).replace(/"/g,'""');
     const note = sanitizeCsvField(t.note||"").replace(/"/g,'""');
-    csv += `${t.date},${t.type},"${category}",${t.amount},"${note}"\n`;
+    csv += `${date},${t.type},"${category}",${t.amount},"${note}"\n`;
   });
   return csv;
 }
@@ -197,7 +206,7 @@ export function parseInventoryForm(fields, lastUpdated = todayISO()){
       name: fields.name.trim(),
       category: fields.category,
       quantity: q,
-      unit: (fields.unit||"unidades").trim(),
+      unit: fields.unit || "Cantidad",
       unitValue: uv,
       minStock: fields.minStock===""||fields.minStock==null ? null : parseFloat(fields.minStock),
       lastUpdated,

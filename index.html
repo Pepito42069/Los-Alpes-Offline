@@ -169,7 +169,7 @@
 
 <script type="module">
 import {
-  INCOME_CATS, EXPENSE_CATS, INV_CATS,
+  INCOME_CATS, EXPENSE_CATS, INV_CATS, UNIT_OPTIONS,
   uid, fmtCOP, fmtDate, monthLabel, todayISO, escapeHtml as esc,
   loadData, saveData,
   computeSummary, totalProducido, computeDeliveredToMilkman, computeMilkBalance, computeMilkChartMax,
@@ -333,7 +333,7 @@ function viewInventario(){
         <div class="field"><label>Cantidad</label>
           <input class="mono" type="number" step="0.01" name="quantity" value="${e?esc(e.quantity):''}" required></div>
         <div class="field"><label>Unidad</label>
-          <input type="text" name="unit" value="${e?esc(e.unit):'kg'}" placeholder="kg, litros, cabezas..."></div>
+          <select name="unit">${UNIT_OPTIONS.map(u=>`<option ${e&&e.unit===u?'selected':''}>${u}</option>`).join("")}</select></div>
         <div class="field"><label>Valor unitario</label>
           <input class="mono" type="number" step="100" name="unitValue" value="${e?esc(e.unitValue):''}" required></div>
       </div>
