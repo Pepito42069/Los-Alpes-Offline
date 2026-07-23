@@ -46,10 +46,17 @@
   }
   header h1{ margin:0; color:var(--paper); font-size:21px; font-weight:800; letter-spacing:.2px; display:flex; align-items:center; gap:8px; }
   header p{ margin:3px 0 12px; color:var(--olive-light); font-size:12px; letter-spacing:.1px; }
-  nav{ display:flex; gap:4px; background:var(--green); padding:0 8px; position:relative; z-index:1; }
+  /* Tabs fill the width when they fit; on a narrow phone they keep a legible
+     min-width and the bar scrolls sideways instead of squishing the labels. */
+  nav{
+    display:flex; gap:4px; background:var(--green); padding:0 8px; position:relative; z-index:1;
+    overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;
+  }
+  nav::-webkit-scrollbar{ display:none; }
   nav button{
-    flex:1; border:none; background:transparent; color:var(--paper);
-    opacity:.62; font-size:12px; font-weight:600; padding:11px 4px; border-radius:10px 10px 0 0;
+    flex:1 0 auto; min-width:92px; white-space:nowrap;
+    border:none; background:transparent; color:var(--paper);
+    opacity:.62; font-size:12px; font-weight:600; padding:11px 8px; border-radius:10px 10px 0 0;
     border-top:2px solid transparent; cursor:pointer;
     transition: background-color .18s var(--ease), opacity .18s var(--ease), color .18s var(--ease);
   }
@@ -176,7 +183,9 @@ import {
   findDuplicateMilkRecord, computeReport, buildTransactionsCsv, buildBackupPayload,
   parseBackupData, parseTransactionForm, parseInventoryForm, parseMilkForm, parseCowForm,
   getLastMilkPrice, syncMilkSaleTransaction, removeMilkSaleTransaction,
-  cowEstado, milkFormCows, computeCowProfitability,
+  cowEstado, isProductionCow, milkFormCows, computeCowProfitability,
+  parseHerdEventForm, summarizeHerd,
+  parseLevanteForm, computeLevanteProfit,
 } from "./app-logic.js";
 
 // ---------- State ----------
@@ -187,13 +196,19 @@ const state = {
   inventory: data0.inventory || [],
   cows: data0.cows || [],
   milkRecords: data0.milkRecords || [],
+  herdEvents: data0.herdEvents || [],
+  levanteAnimals: data0.levanteAnimals || [],
   editingTx: null,
   editingInv: null,
   editingMilk: null,
   editingCow: null,
+  editingHerd: null,
+  editingLevante: null,
   filter: "todos",
   repFrom: (()=>{ const d=new Date(); d.setMonth(d.getMonth()-1); return d.toISOString().slice(0,10); })(),
   repTo: new Date().toISOString().slice(0,10),
+  levFrom: (()=>{ const d=new Date(); d.setMonth(d.getMonth()-12); return d.toISOString().slice(0,10); })(),
+  levTo: new Date().toISOString().slice(0,10),
 };
 
 function setTab(t){ state.tab=t; render(); }
@@ -207,12 +222,13 @@ function render(){
   else if(state.tab==="cuentas") app.innerHTML = viewCuentas();
   else if(state.tab==="inventario") app.innerHTML = viewInventario();
   else if(state.tab==="produccion") app.innerHTML = viewProduccion();
+  else if(state.tab==="ganado") app.innerHTML = viewGanado();
   else if(state.tab==="reportes") app.innerHTML = viewReportes();
   bindEvents();
 }
 
 function renderNav(){
-  const tabs = [["resumen","📋 Resumen"],["cuentas","💰 Cuentas"],["inventario","📦 Inventario"],["produccion","🐄 Producción"],["reportes","📊 Reportes"]];
+  const tabs = [["resumen","📋 Resumen"],["cuentas","💰 Cuentas"],["inventario","📦 Inventario"],["produccion","🥛 Producción"],["ganado","🐂 Ganado"],["reportes","📊 Reportes"]];
   document.getElementById("tabnav").innerHTML = tabs.map(([id,label])=>
     `<button class="${state.tab===id?'active':''}" onclick="setTab('${id}')">${label}</button>`
   ).join("");
@@ -374,17 +390,17 @@ function viewInventario(){
 // ---------- Producción de leche ----------
 function viewProduccion(){
   const em = state.editingMilk;
-  const ec = state.editingCow;
   const cows = state.cows;
   const perCow = em ? em.perCow || {} : {};
   const hasCalves = window._hasCalves !== false;
   const lastMilkPrice = getLastMilkPrice(state.milkRecords);
+  const prodCows = cows.filter(isProductionCow);
 
   const formCows = milkFormCows(cows, em);
   const cowsBlock = cows.length===0
-    ? `<p class="muted" style="margin-bottom:8px">Agrega tus vacas para empezar a registrar litros por cada una.</p>`
+    ? `<p class="muted" style="margin-bottom:8px">Agrega tus vacas en la pestaña <strong>Ganado</strong> para empezar a registrar litros.</p>`
     : formCows.length===0
-    ? `<p class="muted" style="margin-bottom:8px">No hay vacas en producción. Cambia el estado de una vaca a “En producción” para registrar sus litros.</p>`
+    ? `<p class="muted" style="margin-bottom:8px">No hay vacas en producción. Cambia el estado de una vaca a “En producción” en la pestaña <strong>Ganado</strong> para registrar sus litros.</p>`
     : `<div style="margin-bottom:10px">
         <div class="fields2" style="margin-bottom:2px"><span></span>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -410,50 +426,13 @@ function viewProduccion(){
 
   return `
   <div class="card">
-    <div style="font-weight:700;color:var(--green);margin-bottom:8px;font-size:14px">🐄 Tus vacas</div>
-    <form id="cow-form">
-      <div class="fields2">
-        <div class="field"><label>Nombre o número</label>
-          <input type="text" name="name" value="${ec?esc(ec.name):''}" placeholder="Ej. Lola" required></div>
-        <div class="field"><label>Peso (kg, opcional)</label>
-          <input class="mono" type="number" step="0.1" min="0" name="weight" value="${ec&&ec.weight!=null?esc(ec.weight):''}" placeholder="—"></div>
-      </div>
-      <div class="fields2">
-        <div class="field"><label>Estado</label>
-          <select name="estado">${COW_STATES.map(s=>`<option ${cowEstado(ec||{})===s?'selected':''}>${s}</option>`).join("")}</select></div>
-        <div class="field"><label>Último parto (opcional)</label>
-          <input type="date" name="lastCalvingDate" value="${ec&&ec.lastCalvingDate?esc(ec.lastCalvingDate):''}"></div>
-      </div>
-      <div class="field"><label>Notas de salud (opcional)</label>
-        <input type="text" name="healthNotes" value="${ec?esc(ec.healthNotes||''):''}" placeholder="Ej. vacunada, cojea..."></div>
-      <div style="display:flex;justify-content:flex-end;gap:8px">
-        ${ec?`<button type="button" class="btn btn-ghost" id="cow-cancel">Cancelar</button>`:""}
-        <button type="submit" class="btn ${ec?'btn-ochre':'btn-green'}">${ec?'Guardar cambios':'➕ Agregar vaca'}</button>
-      </div>
-      <input type="hidden" name="id" value="${ec?esc(ec.id):''}">
-    </form>
-    ${cows.length===0 ? `<p class="empty" style="padding:16px 0">Aún no has agregado vacas.</p>` :
-      `<div style="margin-top:8px">${cows.map(c=>{
-        const estado = cowEstado(c);
-        const details = [
-          c.weight!=null ? `${esc(c.weight)} kg` : null,
-          c.lastCalvingDate ? `Parto: ${fmtDate(c.lastCalvingDate)}` : null,
-          c.healthNotes ? esc(c.healthNotes) : null,
-        ].filter(Boolean).join(' · ') || 'Sin datos adicionales';
-        return `<div class="row">
-          <div style="min-width:0">
-            <div style="font-weight:600;font-size:14px">${esc(c.name)}</div>
-            <div class="muted">${details}</div>
-            <select class="cow-estado" data-cow-estado="${esc(c.id)}" style="margin-top:5px;max-width:150px;font-size:12px;padding:4px 8px">
-              ${COW_STATES.map(s=>`<option ${estado===s?'selected':''}>${s}</option>`).join("")}
-            </select>
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-            <button class="icon-btn" data-edit-cow="${esc(c.id)}">✎</button>
-            <button class="icon-btn" data-del-cow="${esc(c.id)}">✕</button>
-          </div>
-        </div>`;
-      }).join("")}</div>`}
+    <div style="font-weight:700;color:var(--green);margin-bottom:6px;font-size:14px">🥛 Vacas en producción</div>
+    ${prodCows.length===0
+      ? `<p class="muted">Ninguna vaca en producción. Marca una vaca como “En producción” en la pestaña <strong>Ganado</strong>.</p>`
+      : `<div style="display:flex;flex-wrap:wrap;gap:6px">${prodCows.map(c=>`
+          <span style="display:inline-flex;align-items:center;background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12px;font-weight:600">${esc(c.name)}</span>`).join("")}
+        </div>
+        <p class="muted" style="margin-top:8px">Administra las vacas y su estado en la pestaña <strong>Ganado</strong>.</p>`}
   </div>
 
   <div class="card">
@@ -534,6 +513,184 @@ function viewProduccion(){
         </div>`;
       }).join("")}
   </div>`;
+}
+
+// ---------- Ganado ----------
+function viewGanado(){
+  const ec = state.editingCow;
+  const eh = state.editingHerd;
+  const el = state.editingLevante;
+  const cows = state.cows;
+
+  // --- Cow fichas ---
+  const cowFichas = `
+  <div class="card">
+    <div style="font-weight:700;color:var(--green);margin-bottom:8px;font-size:14px">🐄 Fichas de vacas</div>
+    <form id="cow-form">
+      <div class="fields2">
+        <div class="field"><label>Nombre o número</label>
+          <input type="text" name="name" value="${ec?esc(ec.name):''}" placeholder="Ej. Lola" required></div>
+        <div class="field"><label>Peso (kg, opcional)</label>
+          <input class="mono" type="number" step="0.1" min="0" name="weight" value="${ec&&ec.weight!=null?esc(ec.weight):''}" placeholder="—"></div>
+      </div>
+      <div class="fields2">
+        <div class="field"><label>Estado</label>
+          <select name="estado">${COW_STATES.map(s=>`<option ${cowEstado(ec||{})===s?'selected':''}>${s}</option>`).join("")}</select></div>
+        <div class="field"><label>Último parto (opcional)</label>
+          <input type="date" name="lastCalvingDate" value="${ec&&ec.lastCalvingDate?esc(ec.lastCalvingDate):''}"></div>
+      </div>
+      <div class="field"><label>Notas de salud (opcional)</label>
+        <input type="text" name="healthNotes" value="${ec?esc(ec.healthNotes||''):''}" placeholder="Ej. vacunada, cojea..."></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        ${ec?`<button type="button" class="btn btn-ghost" id="cow-cancel">Cancelar</button>`:""}
+        <button type="submit" class="btn ${ec?'btn-ochre':'btn-green'}">${ec?'Guardar cambios':'➕ Agregar vaca'}</button>
+      </div>
+      <input type="hidden" name="id" value="${ec?esc(ec.id):''}">
+    </form>
+    ${cows.length===0 ? `<p class="empty" style="padding:16px 0">Aún no has agregado vacas.</p>` :
+      `<div style="margin-top:8px">${cows.map(c=>{
+        const estado = cowEstado(c);
+        const details = [
+          c.weight!=null ? `${esc(c.weight)} kg` : null,
+          c.lastCalvingDate ? `Parto: ${fmtDate(c.lastCalvingDate)}` : null,
+          c.healthNotes ? esc(c.healthNotes) : null,
+        ].filter(Boolean).join(' · ') || 'Sin datos adicionales';
+        return `<div class="row">
+          <div style="min-width:0">
+            <div style="font-weight:600;font-size:14px">${esc(c.name)}</div>
+            <div class="muted">${details}</div>
+            <select class="cow-estado" data-cow-estado="${esc(c.id)}" style="margin-top:5px;max-width:150px;font-size:12px;padding:4px 8px">
+              ${COW_STATES.map(s=>`<option ${estado===s?'selected':''}>${s}</option>`).join("")}
+            </select>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+            <button class="icon-btn" data-edit-cow="${esc(c.id)}">✎</button>
+            <button class="icon-btn" data-del-cow="${esc(c.id)}">✕</button>
+          </div>
+        </div>`;
+      }).join("")}</div>`}
+  </div>`;
+
+  // --- Nacimientos y mortalidad ---
+  const herdType = window._herdType || "Nacimiento";
+  const herd = summarizeHerd(state.herdEvents);
+  const herdList = [...state.herdEvents].sort((a,b)=>b.date.localeCompare(a.date));
+  const nacimientos = `
+  <div class="card">
+    <div style="font-weight:700;color:var(--green);margin-bottom:8px;font-size:14px">Nacimientos y mortalidad</div>
+    <form id="herd-form">
+      <div class="toggle-type">
+        <button type="button" data-herd-type="Nacimiento" class="${herdType==='Nacimiento'?'on-ingreso':''}">Nacimiento</button>
+        <button type="button" data-herd-type="Muerte" class="${herdType==='Muerte'?'on-gasto':''}">Muerte</button>
+      </div>
+      <div class="fields2">
+        <div class="field"><label>Fecha</label>
+          <input type="date" name="date" value="${eh?esc(eh.date):todayISO()}" required></div>
+        <div class="field"><label>Cabezas</label>
+          <input class="mono" type="number" step="1" min="1" name="count" value="${eh?esc(eh.count):'1'}" required></div>
+      </div>
+      <div class="field"><label>Nota (opcional)</label>
+        <input type="text" name="note" value="${eh?esc(eh.note||''):''}" placeholder="Detalle"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        ${eh?`<button type="button" class="btn btn-ghost" id="herd-cancel">Cancelar</button>`:""}
+        <button type="submit" class="btn ${eh?'btn-ochre':'btn-green'}">${eh?'Guardar cambios':'➕ Registrar'}</button>
+      </div>
+      <input type="hidden" name="type" value="${herdType}">
+      <input type="hidden" name="id" value="${eh?esc(eh.id):''}">
+    </form>
+    ${state.herdEvents.length>0?`<div class="muted" style="margin:8px 0 4px">Nacimientos: ${herd.nacimientos} · Muertes: ${herd.muertes} · Variación: ${herd.neto>=0?'+':''}${herd.neto} cabezas</div>`:""}
+    ${herdList.length===0?`<p class="empty">Sin registros aún.</p>`:
+      herdList.map(e=>`<div class="row">
+        <div style="min-width:0">
+          <div style="font-weight:600;font-size:14px">${e.type==='Nacimiento'?'🐄 Nacimiento':'⚰️ Muerte'} · ${esc(e.count)} cabeza(s)</div>
+          <div class="muted">${fmtDate(e.date)}${e.note?' · '+esc(e.note):''}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          <button class="icon-btn" data-edit-herd="${esc(e.id)}">✎</button>
+          <button class="icon-btn" data-del-herd="${esc(e.id)}">✕</button>
+        </div>
+      </div>`).join("")}
+  </div>`;
+
+  // --- Ganado de levante (per-animal buy/sell) ---
+  const levSold = window._levSold === true;
+  const { sold, totalGanancia, enLevante } = computeLevanteProfit(state.levanteAnimals, state.levFrom, state.levTo);
+  const levante = `
+  <div class="card">
+    <div style="font-weight:700;color:var(--green);margin-bottom:8px;font-size:14px">🐂 Ganado de levante</div>
+    <form id="levante-form">
+      <div class="fields2">
+        <div class="field"><label>Nombre o identificación</label>
+          <input type="text" name="name" value="${el?esc(el.name):''}" placeholder="Ej. Novillo 12" required></div>
+        <div class="field"><label>Fecha de compra</label>
+          <input type="date" name="purchaseDate" value="${el?esc(el.purchaseDate):todayISO()}" required></div>
+      </div>
+      <div class="fields2">
+        <div class="field"><label>Precio de compra (COP)</label>
+          <input class="mono" type="number" step="1000" min="0" name="purchasePrice" value="${el?esc(el.purchasePrice):''}" required></div>
+        <div class="field"><label>Peso al comprar (kg, opcional)</label>
+          <input class="mono" type="number" step="0.1" min="0" name="purchaseWeight" value="${el&&el.purchaseWeight!=null?esc(el.purchaseWeight):''}" placeholder="—"></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;cursor:pointer">
+        <input type="checkbox" id="lev-sold-toggle" style="width:auto" ${levSold?'checked':''}>
+        <span style="font-weight:600;color:var(--ink-faint)">Ya se vendió</span>
+      </label>
+      ${levSold?`
+      <div class="fields3">
+        <div class="field"><label>Fecha de venta</label>
+          <input type="date" name="saleDate" value="${el&&el.saleDate?esc(el.saleDate):todayISO()}"></div>
+        <div class="field"><label>Precio de venta (COP)</label>
+          <input class="mono" type="number" step="1000" min="0" name="salePrice" value="${el&&el.salePrice!=null?esc(el.salePrice):''}"></div>
+        <div class="field"><label>Peso al vender (kg)</label>
+          <input class="mono" type="number" step="0.1" min="0" name="saleWeight" value="${el&&el.saleWeight!=null?esc(el.saleWeight):''}" placeholder="—"></div>
+      </div>`:""}
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        ${el?`<button type="button" class="btn btn-ghost" id="levante-cancel">Cancelar</button>`:""}
+        <button type="submit" class="btn ${el?'btn-ochre':'btn-green'}">${el?'Guardar cambios':'➕ Agregar animal'}</button>
+      </div>
+      <input type="hidden" name="estado" value="${levSold?'Vendido':'En levante'}">
+      <input type="hidden" name="id" value="${el?esc(el.id):''}">
+    </form>
+
+    <div style="font-weight:700;color:var(--green);margin:6px 0 4px;font-size:13px">En levante (sin vender)</div>
+    ${enLevante.length===0?`<p class="empty" style="padding:14px 0">Ningún animal en levante.</p>`:
+      enLevante.map(a=>`<div class="row">
+        <div style="min-width:0">
+          <div style="font-weight:600;font-size:14px">${esc(a.name)}</div>
+          <div class="muted">Compra ${fmtDate(a.purchaseDate)} · ${fmtCOP(a.purchasePrice)}${a.purchaseWeight!=null?' · '+esc(a.purchaseWeight)+' kg':''}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          <button class="icon-btn" data-edit-lev="${esc(a.id)}">✎</button>
+          <button class="icon-btn" data-del-lev="${esc(a.id)}">✕</button>
+        </div>
+      </div>`).join("")}
+
+    <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px">
+      <div style="font-weight:700;color:var(--green);margin-bottom:6px;font-size:13px">Ganancia de animales vendidos</div>
+      <div class="fields2 no-print" style="margin-bottom:8px">
+        <div class="field" style="margin-bottom:0"><label>Desde</label><input type="date" id="lev-from" value="${esc(state.levFrom)}"></div>
+        <div class="field" style="margin-bottom:0"><label>Hasta</label><input type="date" id="lev-to" value="${esc(state.levTo)}"></div>
+      </div>
+      ${sold.length===0?`<p class="empty">Sin ventas de levante en este rango.</p>`:`
+      ${sold.map(a=>`<div class="row">
+        <div style="min-width:0">
+          <div style="font-weight:600;font-size:14px">${esc(a.name)}</div>
+          <div class="muted">Compra ${fmtCOP(a.purchasePrice)} → Venta ${fmtCOP(a.salePrice)} · ${fmtDate(a.saleDate)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          <span class="mono ${a.ganancia<0?'warn':'ok'}" style="font-weight:700;font-size:13px">${a.ganancia>=0?'+':''}${fmtCOP(a.ganancia)}</span>
+          <button class="icon-btn" data-edit-lev="${esc(a.id)}">✎</button>
+          <button class="icon-btn" data-del-lev="${esc(a.id)}">✕</button>
+        </div>
+      </div>`).join("")}
+      <div class="row" style="border-top:2px solid var(--line)">
+        <div style="font-weight:700">Ganancia acumulada (${sold.length} vendido${sold.length===1?'':'s'})</div>
+        <div class="mono ${totalGanancia<0?'warn':'ok'}" style="font-weight:800;font-size:15px">${totalGanancia>=0?'+':''}${fmtCOP(totalGanancia)}</div>
+      </div>`}
+    </div>
+  </div>`;
+
+  return cowFichas + nacimientos + levante;
 }
 
 // ---------- Reportes ----------
@@ -705,6 +862,77 @@ function bindEvents(){
     }
   }));
 
+  // ----- Nacimientos y mortalidad -----
+  const herdForm = document.getElementById("herd-form");
+  if(herdForm){
+    herdForm.querySelectorAll("[data-herd-type]").forEach(btn=>{
+      btn.addEventListener("click", ()=>{ window._herdType = btn.dataset.herdType; render(); });
+    });
+    herdForm.addEventListener("submit",(ev)=>{
+      ev.preventDefault();
+      const fd = new FormData(herdForm);
+      const { valid, record: rec } = parseHerdEventForm({
+        id: fd.get("id"), type: fd.get("type"), date: fd.get("date"), count: fd.get("count"), note: fd.get("note"),
+      });
+      if(!valid) return;
+      const idx = state.herdEvents.findIndex(e=>e.id===rec.id);
+      if(idx>=0) state.herdEvents[idx]=rec; else state.herdEvents.push(rec);
+      state.editingHerd = null; window._herdType = null;
+      saveData(localStorage, state); render();
+    });
+    const cancel = document.getElementById("herd-cancel");
+    if(cancel) cancel.addEventListener("click",()=>{ state.editingHerd=null; window._herdType=null; render(); });
+  }
+  document.querySelectorAll("[data-edit-herd]").forEach(b=>b.addEventListener("click",()=>{
+    state.editingHerd = state.herdEvents.find(e=>e.id===b.dataset.editHerd);
+    window._herdType = state.editingHerd ? state.editingHerd.type : null;
+    render();
+  }));
+  document.querySelectorAll("[data-del-herd]").forEach(b=>b.addEventListener("click",()=>{
+    if(confirm("¿Eliminar este registro?")){
+      state.herdEvents = state.herdEvents.filter(e=>e.id!==b.dataset.delHerd);
+      saveData(localStorage, state); render();
+    }
+  }));
+
+  // ----- Ganado de levante -----
+  const levSoldToggle = document.getElementById("lev-sold-toggle");
+  if(levSoldToggle) levSoldToggle.addEventListener("change", ()=>{ window._levSold = levSoldToggle.checked; render(); });
+  const levanteForm = document.getElementById("levante-form");
+  if(levanteForm){
+    levanteForm.addEventListener("submit",(ev)=>{
+      ev.preventDefault();
+      const fd = new FormData(levanteForm);
+      const { valid, record: rec } = parseLevanteForm({
+        id: fd.get("id"), name: fd.get("name"),
+        purchaseDate: fd.get("purchaseDate"), purchasePrice: fd.get("purchasePrice"), purchaseWeight: fd.get("purchaseWeight"),
+        estado: fd.get("estado"), saleDate: fd.get("saleDate"), salePrice: fd.get("salePrice"), saleWeight: fd.get("saleWeight"),
+      });
+      if(!valid){ alert("Revisa los datos: para marcar como vendido necesitas fecha y precio de venta."); return; }
+      const idx = state.levanteAnimals.findIndex(a=>a.id===rec.id);
+      if(idx>=0) state.levanteAnimals[idx]=rec; else state.levanteAnimals.push(rec);
+      state.editingLevante = null; window._levSold = null;
+      saveData(localStorage, state); render();
+    });
+    const cancel = document.getElementById("levante-cancel");
+    if(cancel) cancel.addEventListener("click",()=>{ state.editingLevante=null; window._levSold=null; render(); });
+  }
+  document.querySelectorAll("[data-edit-lev]").forEach(b=>b.addEventListener("click",()=>{
+    state.editingLevante = state.levanteAnimals.find(a=>a.id===b.dataset.editLev);
+    window._levSold = state.editingLevante ? state.editingLevante.estado==="Vendido" : null;
+    render();
+  }));
+  document.querySelectorAll("[data-del-lev]").forEach(b=>b.addEventListener("click",()=>{
+    if(confirm("¿Eliminar este animal de levante?")){
+      state.levanteAnimals = state.levanteAnimals.filter(a=>a.id!==b.dataset.delLev);
+      saveData(localStorage, state); render();
+    }
+  }));
+  const levFrom = document.getElementById("lev-from");
+  const levTo = document.getElementById("lev-to");
+  if(levFrom) levFrom.addEventListener("change",()=>{ state.levFrom=levFrom.value; render(); });
+  if(levTo) levTo.addEventListener("change",()=>{ state.levTo=levTo.value; render(); });
+
   const calvesToggle = document.getElementById("has-calves-toggle");
   if(calvesToggle) calvesToggle.addEventListener("change", ()=>{ window._hasCalves = calvesToggle.checked; render(); });
 
@@ -781,6 +1009,8 @@ function bindEvents(){
       state.inventory = result.data.inventory;
       state.cows = result.data.cows;
       state.milkRecords = result.data.milkRecords;
+      state.herdEvents = result.data.herdEvents;
+      state.levanteAnimals = result.data.levanteAnimals;
       saveData(localStorage, state); render();
       alert("Respaldo importado correctamente.");
     };
