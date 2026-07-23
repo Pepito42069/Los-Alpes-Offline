@@ -7,7 +7,14 @@ export const INCOME_CATS = ["Venta de leche","Venta de ganado de levante","Venta
 export const EXPENSE_CATS = ["Concentrado y sales","Veterinario y medicamentos","Mano de obra","Pastos y potreros","Transporte","Mantenimiento","Otros gastos"];
 export const INV_CATS = ["Concentrado y sales","Medicamentos veterinarios","Insumos de ordeño","Ganado (lotes)","Herramientas y equipo"];
 export const UNIT_OPTIONS = ["Cantidad","Litros","Mililitros","Kilos"];
+export const COW_STATES = ["En producción","Levante","Seca"];
+export const CONCENTRADO_CATEGORY = "Concentrado y sales";
 export const PIE_COLORS = ["#9A3324","#B8791F","#5C7A4B","#3B5940","#C9584A","#7E9C6C"];
+
+// Cows saved before the estado field existed have none; treat those as "En
+// producción" so they keep appearing in the daily milk form after upgrade.
+export const cowEstado = (cow) => COW_STATES.includes(cow?.estado) ? cow.estado : "En producción";
+export const isProductionCow = (cow) => cowEstado(cow) === "En producción";
 
 export const uid = () => Math.random().toString(36).slice(2,10);
 export const fmtCOP = (n) => new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(n||0);
@@ -138,6 +145,55 @@ export function computeReport(transactions, from, to){
   return { filtered, ingresos, gastos, catList, gradient };
 }
 
+const cowLitersFromEntry = (v) =>
+  (v && typeof v === "object") ? (parseFloat(v.am)||0) + (parseFloat(v.pm)||0) : (parseFloat(v)||0);
+
+// Per-cow profitability over a date range. Income is each cow's produced
+// liters valued at that day's registered price. The concentrado-y-sales
+// expense is NOT measured per animal, so it's split across cows in proportion
+// to each one's share of total production in the period — an estimate, flagged
+// as such in the UI. Rows cover every cow that produced in the range (a cow
+// dried off after producing still contributed to that period's costs), sorted
+// by margin descending.
+export function computeCowProfitability(cows, milkRecords, transactions, from, to){
+  const inRange = milkRecords.filter(r => r.date >= from && r.date <= to);
+  const perCow = {};
+  let totalLiters = 0;
+  inRange.forEach(r => {
+    const price = (typeof r.pricePerLiter === "number" && r.pricePerLiter > 0) ? r.pricePerLiter : 0;
+    Object.entries(r.perCow || {}).forEach(([cowId, v]) => {
+      const liters = cowLitersFromEntry(v);
+      if(liters <= 0) return;
+      if(!perCow[cowId]) perCow[cowId] = { liters: 0, ingreso: 0 };
+      perCow[cowId].liters += liters;
+      perCow[cowId].ingreso += liters * price;
+      totalLiters += liters;
+    });
+  });
+
+  const concentradoCost = transactions
+    .filter(t => t.type === "gasto" && t.category === CONCENTRADO_CATEGORY && t.date >= from && t.date <= to)
+    .reduce((s, t) => s + t.amount, 0);
+
+  const nameById = {};
+  cows.forEach(c => { nameById[c.id] = c.name; });
+
+  const rows = Object.entries(perCow).map(([cowId, agg]) => {
+    const share = totalLiters > 0 ? agg.liters / totalLiters : 0;
+    const assignedCost = concentradoCost * share;
+    return {
+      cowId,
+      name: nameById[cowId] || "(vaca eliminada)",
+      liters: agg.liters,
+      ingreso: agg.ingreso,
+      assignedCost,
+      margin: agg.ingreso - assignedCost,
+    };
+  }).sort((a, b) => b.margin - a.margin);
+
+  return { rows, totalLiters, concentradoCost };
+}
+
 // Spreadsheet apps can interpret a cell starting with =, +, -, @, or a tab/CR
 // as a formula (CSV/"formula injection"). A free-text note or a category
 // carried over from an imported backup could start with one of these, so
@@ -251,11 +307,21 @@ export function parseCowForm(fields){
     record: {
       id: fields.id || uid(),
       name,
+      estado: COW_STATES.includes(fields.estado) ? fields.estado : "En producción",
       weight: weight!=null && !isNaN(weight) ? weight : null,
       lastCalvingDate: fields.lastCalvingDate || null,
       healthNotes: (fields.healthNotes||"").trim(),
     },
   };
+}
+
+// The daily milk form only lists cows in production, but when editing an
+// existing record it must also list any cow that already has liters recorded
+// there — otherwise a cow that was dried off after the record was made would
+// have its data silently dropped on the next save.
+export function milkFormCows(cows, editingRecord){
+  const recorded = editingRecord && editingRecord.perCow ? new Set(Object.keys(editingRecord.perCow)) : new Set();
+  return cows.filter(c => isProductionCow(c) || recorded.has(c.id));
 }
 
 // ---------- Producción ↔ Cuentas ----------

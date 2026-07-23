@@ -9,6 +9,7 @@ import {
   parseTransactionForm, parseInventoryForm, parseMilkForm, parseCowForm,
   milkTransactionId, getLastMilkPrice, computeMilkSaleTransaction,
   syncMilkSaleTransaction, removeMilkSaleTransaction,
+  COW_STATES, cowEstado, isProductionCow, milkFormCows, computeCowProfitability,
 } from "../app-logic.js";
 
 function makeFakeStorage(){
@@ -580,6 +581,126 @@ describe("parseCowForm", () => {
   it("preserves an existing id when editing", () => {
     const { record } = parseCowForm({ id: "existing-id", name: "Lola" });
     expect(record.id).toBe("existing-id");
+  });
+
+  it("defaults estado to 'En producción' and rejects unknown values", () => {
+    expect(parseCowForm({ name: "Lola" }).record.estado).toBe("En producción");
+    expect(parseCowForm({ name: "Lola", estado: "hack" }).record.estado).toBe("En producción");
+  });
+
+  it("keeps a valid estado", () => {
+    expect(parseCowForm({ name: "Lola", estado: "Levante" }).record.estado).toBe("Levante");
+    expect(parseCowForm({ name: "Lola", estado: "Seca" }).record.estado).toBe("Seca");
+  });
+});
+
+describe("cow estado helpers", () => {
+  it("cowEstado returns the estado, defaulting missing/invalid to production", () => {
+    expect(cowEstado({ estado: "Levante" })).toBe("Levante");
+    expect(cowEstado({})).toBe("En producción");
+    expect(cowEstado({ estado: "otro" })).toBe("En producción");
+    expect(cowEstado(null)).toBe("En producción");
+  });
+
+  it("isProductionCow is true for production and for legacy cows without estado", () => {
+    expect(isProductionCow({ estado: "En producción" })).toBe(true);
+    expect(isProductionCow({})).toBe(true);
+    expect(isProductionCow({ estado: "Levante" })).toBe(false);
+    expect(isProductionCow({ estado: "Seca" })).toBe(false);
+  });
+
+  it("exposes the three states", () => {
+    expect(COW_STATES).toEqual(["En producción", "Levante", "Seca"]);
+  });
+});
+
+describe("milkFormCows", () => {
+  const cows = [
+    { id: "c1", name: "Lola", estado: "En producción" },
+    { id: "c2", name: "Toro", estado: "Levante" },
+    { id: "c3", name: "Vieja", estado: "Seca" },
+    { id: "c4", name: "Legacy" }, // no estado → treated as production
+  ];
+
+  it("lists only production cows (including legacy) when adding a new record", () => {
+    expect(milkFormCows(cows, null).map(c => c.id)).toEqual(["c1", "c4"]);
+  });
+
+  it("also includes a non-production cow if the record being edited has its data", () => {
+    const editing = { perCow: { c3: { am: 4, pm: 2 } } };
+    expect(milkFormCows(cows, editing).map(c => c.id)).toEqual(["c1", "c3", "c4"]);
+  });
+});
+
+describe("computeCowProfitability", () => {
+  const cows = [
+    { id: "c1", name: "Lola", estado: "En producción" },
+    { id: "c2", name: "Manchas", estado: "En producción" },
+  ];
+  const milkRecords = [
+    { id: "m1", date: "2026-01-05", pricePerLiter: 2000, perCow: { c1: { am: 10, pm: 10 }, c2: { am: 5, pm: 5 } } },
+    { id: "m2", date: "2026-01-10", pricePerLiter: 2000, perCow: { c1: { am: 10, pm: 10 }, c2: { am: 5, pm: 5 } } },
+    { id: "m3", date: "2026-02-01", pricePerLiter: 3000, perCow: { c1: { am: 100, pm: 0 } } }, // out of range
+  ];
+  const transactions = [
+    { id: "t1", type: "gasto", category: "Concentrado y sales", amount: 90000, date: "2026-01-07" },
+    { id: "t2", type: "gasto", category: "Transporte", amount: 50000, date: "2026-01-08" },
+    { id: "t3", type: "gasto", category: "Concentrado y sales", amount: 10000, date: "2026-03-01" }, // out of range
+  ];
+
+  it("computes liters, income (liters × daily price) and total production in range", () => {
+    const { rows, totalLiters, concentradoCost } = computeCowProfitability(cows, milkRecords, transactions, "2026-01-01", "2026-01-31");
+    expect(totalLiters).toBe(60); // c1: 40, c2: 20
+    expect(concentradoCost).toBe(90000); // only the in-range concentrado expense
+    const lola = rows.find(r => r.cowId === "c1");
+    const manchas = rows.find(r => r.cowId === "c2");
+    expect(lola.liters).toBe(40);
+    expect(lola.ingreso).toBe(80000); // 40 × 2000
+    expect(manchas.liters).toBe(20);
+    expect(manchas.ingreso).toBe(40000); // 20 × 2000
+  });
+
+  it("allocates concentrado cost proportionally to each cow's share of liters", () => {
+    const { rows } = computeCowProfitability(cows, milkRecords, transactions, "2026-01-01", "2026-01-31");
+    const lola = rows.find(r => r.cowId === "c1");   // 40/60 share
+    const manchas = rows.find(r => r.cowId === "c2"); // 20/60 share
+    expect(lola.assignedCost).toBeCloseTo(60000, 5);   // 90000 × 40/60
+    expect(manchas.assignedCost).toBeCloseTo(30000, 5); // 90000 × 20/60
+    expect(lola.margin).toBeCloseTo(20000, 5);   // 80000 − 60000
+    expect(manchas.margin).toBeCloseTo(10000, 5); // 40000 − 30000
+  });
+
+  it("sorts rows by margin descending", () => {
+    const { rows } = computeCowProfitability(cows, milkRecords, transactions, "2026-01-01", "2026-01-31");
+    expect(rows.map(r => r.cowId)).toEqual(["c1", "c2"]);
+  });
+
+  it("only includes cows that actually produced in the range", () => {
+    const { rows } = computeCowProfitability(cows, milkRecords, transactions, "2026-02-01", "2026-02-28");
+    expect(rows.map(r => r.cowId)).toEqual(["c1"]);
+  });
+
+  it("labels a produced-but-since-deleted cow instead of dropping it", () => {
+    const { rows } = computeCowProfitability([], milkRecords, transactions, "2026-02-01", "2026-02-28");
+    expect(rows[0].name).toBe("(vaca eliminada)");
+  });
+
+  it("assigns zero cost when there is no production (no division by zero)", () => {
+    const { rows, totalLiters } = computeCowProfitability(cows, [], transactions, "2026-01-01", "2026-01-31");
+    expect(totalLiters).toBe(0);
+    expect(rows).toEqual([]);
+  });
+
+  it("values a day with no registered price at zero income but still counts its liters for cost sharing", () => {
+    const records = [
+      { id: "m1", date: "2026-01-05", pricePerLiter: 0, perCow: { c1: { am: 10, pm: 0 } } },
+      { id: "m2", date: "2026-01-06", pricePerLiter: 2000, perCow: { c2: { am: 10, pm: 0 } } },
+    ];
+    const txs = [{ id: "t1", type: "gasto", category: "Concentrado y sales", amount: 20000, date: "2026-01-05" }];
+    const { rows } = computeCowProfitability(cows, records, txs, "2026-01-01", "2026-01-31");
+    const lola = rows.find(r => r.cowId === "c1");
+    expect(lola.ingreso).toBe(0);
+    expect(lola.assignedCost).toBeCloseTo(10000, 5); // still 10/20 share of cost
   });
 });
 
