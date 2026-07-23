@@ -312,14 +312,28 @@ function viewProduccion(){
   const em = state.editingMilk;
   const cows = state.cows;
   const perCow = em ? em.perCow || {} : {};
+  const hasCalves = window._hasCalves !== false;
 
   const cowsBlock = cows.length===0
     ? `<p class="muted" style="margin-bottom:8px">Agrega tus vacas para empezar a registrar litros por cada una.</p>`
-    : `<div style="margin-bottom:10px">${cows.map(c=>`
-        <div class="field" style="margin-bottom:6px">
-          <label>${c.name}</label>
-          <input class="mono" type="number" step="0.1" min="0" name="cow_${c.id}" value="${perCow[c.id]!=null?perCow[c.id]:''}" placeholder="Litros">
-        </div>`).join("")}</div>`;
+    : `<div style="margin-bottom:10px">
+        <div class="fields2" style="margin-bottom:2px"><span></span>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <span class="muted" style="font-size:10px;text-align:center">Mañana</span>
+            <span class="muted" style="font-size:10px;text-align:center">Tarde</span>
+          </div>
+        </div>
+        ${cows.map(c=>{
+          const pcv = perCow[c.id];
+          const am = pcv && typeof pcv === "object" ? pcv.am : (pcv!=null?pcv:'');
+          const pm = pcv && typeof pcv === "object" ? pcv.pm : '';
+          return `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;align-items:end;margin-bottom:6px">
+            <label style="align-self:center;margin-bottom:0">${c.name}</label>
+            <input class="mono" type="number" step="0.1" min="0" name="am_${c.id}" value="${am!==''?am:''}" placeholder="L">
+            <input class="mono" type="number" step="0.1" min="0" name="pm_${c.id}" value="${pm!==''?pm:''}" placeholder="L">
+          </div>`;
+        }).join("")}
+      </div>`;
 
   const records = [...state.milkRecords].sort((a,b)=>b.date.localeCompare(a.date));
   const recent = [...state.milkRecords].sort((a,b)=>a.date.localeCompare(b.date)).slice(-10);
@@ -340,19 +354,23 @@ function viewProduccion(){
   </div>
 
   <div class="card">
-    <div style="font-weight:700;color:var(--green);margin-bottom:8px;font-size:14px">Registro diario</div>
+    <div style="font-weight:700;color:var(--green);margin-bottom:8px;font-size:14px">Registro diario · 2 ordeños</div>
     <form id="milk-form">
       <div class="field"><label>Fecha</label>
         <input type="date" name="date" value="${em?em.date:todayISO()}" required></div>
       ${cowsBlock}
-      <div class="fields3">
+      <div class="fields2">
         <div class="field"><label>Consumo en la finca (L)</label>
           <input class="mono" type="number" step="0.1" min="0" name="farmConsumption" value="${em?em.farmConsumption:''}" placeholder="0"></div>
-        <div class="field"><label>Consumo terneros (L)</label>
-          <input class="mono" type="number" step="0.1" min="0" name="calfConsumption" value="${em?em.calfConsumption:''}" placeholder="0"></div>
         <div class="field"><label>Se lleva el lechero (L)</label>
           <input class="mono" type="number" step="0.1" min="0" name="deliveredToMilkman" value="${em?em.deliveredToMilkman:''}" placeholder="0"></div>
       </div>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;cursor:pointer">
+        <input type="checkbox" id="has-calves-toggle" style="width:auto" ${hasCalves?'checked':''}>
+        <span style="font-weight:600;color:var(--ink-faint)">Hay terneros lactando en este período</span>
+      </label>
+      ${hasCalves?`<div class="field"><label>Consumo terneros (L)</label>
+        <input class="mono" type="number" step="0.1" min="0" name="calfConsumption" value="${em?em.calfConsumption:''}" placeholder="0"></div>`:""}
       <div class="field"><label>Nota (opcional)</label>
         <input type="text" name="note" value="${em?(em.note||''):''}" placeholder="Detalle"></div>
       <div style="display:flex;justify-content:flex-end;gap:8px">
@@ -383,14 +401,14 @@ function viewProduccion(){
 
   <div class="card">
     <div style="font-weight:700;color:var(--green);margin-bottom:4px;font-size:14px">Balance diario</div>
-    <p class="muted" style="margin-bottom:6px">Balance = producido − (consumo finca + terneros + lechero). Si no da cero, revisa la medición o pérdidas.</p>
+    <p class="muted" style="margin-bottom:6px">Balance = producido (mañana + tarde) − (consumo finca + terneros + lechero). Si no da cero, revisa la medición o pérdidas.</p>
     ${records.length===0?`<p class="empty">Sin registros aún.</p>`:
       records.map(r=>{
         const { producido: prod, balance: bal } = computeMilkBalance(r);
         return `<div class="row">
           <div style="min-width:0">
             <div style="font-weight:600;font-size:14px">${fmtDate(r.date)}</div>
-            <div class="muted">Producido ${prod.toFixed(1)} L · Finca ${r.farmConsumption} L · Terneros ${r.calfConsumption} L · Lechero ${r.deliveredToMilkman} L${r.note?' · '+r.note:''}</div>
+            <div class="muted">Producido ${prod.toFixed(1)} L · Finca ${r.farmConsumption} L${r.hasCalves===false?'':' · Terneros '+r.calfConsumption+' L'} · Lechero ${r.deliveredToMilkman} L${r.note?' · '+r.note:''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
             <span class="mono ${bal<0?'warn':'ok'}" style="font-weight:700;font-size:13px">${bal>=0?'+':''}${bal.toFixed(1)} L</span>
@@ -534,13 +552,18 @@ function bindEvents(){
     }
   }));
 
+  const calvesToggle = document.getElementById("has-calves-toggle");
+  if(calvesToggle) calvesToggle.addEventListener("change", ()=>{ window._hasCalves = calvesToggle.checked; render(); });
+
   const milkForm = document.getElementById("milk-form");
   if(milkForm){
     milkForm.addEventListener("submit",(ev)=>{
       ev.preventDefault();
       const fd = new FormData(milkForm);
-      const { valid, record: rec } = parseMilkForm((name)=>fd.get(name), state.cows);
+      const hasCalves = calvesToggle ? calvesToggle.checked : true;
+      const { valid, record: rec } = parseMilkForm((name)=>fd.get(name), state.cows, hasCalves);
       if(!valid) return;
+      window._hasCalves = hasCalves;
       const editIdx = state.milkRecords.findIndex(r=>r.id===rec.id);
       if(editIdx>=0){
         state.milkRecords[editIdx]=rec;
@@ -557,10 +580,12 @@ function bindEvents(){
       saveData(localStorage, state); render();
     });
     const cancel = document.getElementById("milk-cancel");
-    if(cancel) cancel.addEventListener("click",()=>{ state.editingMilk=null; render(); });
+    if(cancel) cancel.addEventListener("click",()=>{ state.editingMilk=null; window._hasCalves=null; render(); });
   }
   document.querySelectorAll("[data-edit-milk]").forEach(b=>b.addEventListener("click",()=>{
-    state.editingMilk = state.milkRecords.find(r=>r.id===b.dataset.editMilk); render();
+    state.editingMilk = state.milkRecords.find(r=>r.id===b.dataset.editMilk);
+    window._hasCalves = state.editingMilk.hasCalves !== false;
+    render();
   }));
   document.querySelectorAll("[data-del-milk]").forEach(b=>b.addEventListener("click",()=>{
     if(confirm("¿Eliminar este registro diario?")){

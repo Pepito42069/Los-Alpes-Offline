@@ -53,13 +53,19 @@ export function computeSummary(state){
 }
 
 // ---------- Producción de leche ----------
+// perCow values are either { am, pm } (two ordeños) or, for records created
+// before that feature existed, a plain number for the whole day.
 export function totalProducido(record){
-  return Object.values(record.perCow || {}).reduce((s,v)=>s+(parseFloat(v)||0), 0);
+  return Object.values(record.perCow || {}).reduce((s,v)=>{
+    if(v && typeof v === "object") return s + (parseFloat(v.am)||0) + (parseFloat(v.pm)||0);
+    return s + (parseFloat(v)||0);
+  }, 0);
 }
 
 export function computeMilkBalance(record){
   const producido = totalProducido(record);
-  const usado = record.farmConsumption + record.calfConsumption + record.deliveredToMilkman;
+  const calf = record.hasCalves===false ? 0 : record.calfConsumption;
+  const usado = record.farmConsumption + calf + record.deliveredToMilkman;
   return { producido, usado, balance: producido - usado };
 }
 
@@ -153,13 +159,16 @@ export function parseInventoryForm(fields, lastUpdated = todayISO()){
   };
 }
 
-export function parseMilkForm(getValue, cows){
+export function parseMilkForm(getValue, cows, hasCalves = true){
   const date = getValue("date");
   if(!date) return { valid:false };
   const perCow = {};
   cows.forEach(c=>{
-    const v = getValue("cow_"+c.id);
-    if(v!==null && v!=="") perCow[c.id] = parseFloat(v)||0;
+    const am = getValue("am_"+c.id);
+    const pm = getValue("pm_"+c.id);
+    if((am!==null && am!=="") || (pm!==null && pm!=="")){
+      perCow[c.id] = { am: parseFloat(am)||0, pm: parseFloat(pm)||0 };
+    }
   });
   return {
     valid: true,
@@ -168,7 +177,8 @@ export function parseMilkForm(getValue, cows){
       date,
       perCow,
       farmConsumption: parseFloat(getValue("farmConsumption"))||0,
-      calfConsumption: parseFloat(getValue("calfConsumption"))||0,
+      calfConsumption: hasCalves ? (parseFloat(getValue("calfConsumption"))||0) : 0,
+      hasCalves,
       deliveredToMilkman: parseFloat(getValue("deliveredToMilkman"))||0,
       note: (getValue("note")||"").trim(),
     },
