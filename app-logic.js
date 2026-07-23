@@ -8,6 +8,8 @@ export const EXPENSE_CATS = ["Concentrado y sales","Veterinario y medicamentos",
 export const INV_CATS = ["Concentrado y sales","Medicamentos veterinarios","Insumos de ordeño","Ganado (lotes)","Herramientas y equipo"];
 export const UNIT_OPTIONS = ["Cantidad","Litros","Mililitros","Kilos"];
 export const COW_STATES = ["En producción","Levante","Seca"];
+export const HERD_EVENT_TYPES = ["Nacimiento","Muerte"];
+export const LEVANTE_STATES = ["En levante","Vendido"];
 export const CONCENTRADO_CATEGORY = "Concentrado y sales";
 export const PIE_COLORS = ["#9A3324","#B8791F","#5C7A4B","#3B5940","#C9584A","#7E9C6C"];
 
@@ -45,6 +47,8 @@ export function sanitizeAppData(data){
   const inventory = Array.isArray(data?.inventory) ? data.inventory : [];
   const cows = Array.isArray(data?.cows) ? data.cows : [];
   const milkRecords = Array.isArray(data?.milkRecords) ? data.milkRecords : [];
+  const herdEvents = Array.isArray(data?.herdEvents) ? data.herdEvents : [];
+  const levanteAnimals = Array.isArray(data?.levanteAnimals) ? data.levanteAnimals : [];
   return {
     transactions: transactions.filter(t =>
       isPlainRecord(t) && isIsoDate(t.date) &&
@@ -58,6 +62,14 @@ export function sanitizeAppData(data){
     ),
     cows: cows.filter(c => isPlainRecord(c) && typeof c.name === "string"),
     milkRecords: milkRecords.filter(r => isPlainRecord(r) && isIsoDate(r.date)),
+    herdEvents: herdEvents.filter(e =>
+      isPlainRecord(e) && isIsoDate(e.date) && HERD_EVENT_TYPES.includes(e.type) &&
+      typeof e.count === "number" && isFinite(e.count)
+    ),
+    levanteAnimals: levanteAnimals.filter(a =>
+      isPlainRecord(a) && typeof a.name === "string" &&
+      isIsoDate(a.purchaseDate) && typeof a.purchasePrice === "number" && isFinite(a.purchasePrice)
+    ),
   };
 }
 
@@ -66,13 +78,14 @@ export function loadData(storage){
     const raw = storage.getItem(STORAGE_KEY);
     if(raw) return sanitizeAppData(JSON.parse(raw));
   }catch(e){ console.error(e); }
-  return { transactions: [], inventory: [], cows: [], milkRecords: [] };
+  return { transactions: [], inventory: [], cows: [], milkRecords: [], herdEvents: [], levanteAnimals: [] };
 }
 
 export function saveData(storage, state){
   storage.setItem(STORAGE_KEY, JSON.stringify({
     transactions: state.transactions, inventory: state.inventory,
-    cows: state.cows, milkRecords: state.milkRecords,
+    cows: state.cows, milkRecords: state.milkRecords, herdEvents: state.herdEvents,
+    levanteAnimals: state.levanteAnimals,
   }));
 }
 
@@ -220,7 +233,8 @@ export function buildTransactionsCsv(transactions){
 export function buildBackupPayload(state, exportedAt = new Date().toISOString()){
   return JSON.stringify({
     transactions: state.transactions, inventory: state.inventory,
-    cows: state.cows, milkRecords: state.milkRecords, exportedAt,
+    cows: state.cows, milkRecords: state.milkRecords, herdEvents: state.herdEvents,
+    levanteAnimals: state.levanteAnimals, exportedAt,
   }, null, 2);
 }
 
@@ -324,10 +338,24 @@ export function milkFormCows(cows, editingRecord){
   return cows.filter(c => isProductionCow(c) || recorded.has(c.id));
 }
 
+// ---------- Auto-generated ("linked") transactions ----------
+// Some source records (a milk day, a cattle purchase/sale) generate a Cuentas
+// transaction whose id is derived from the source record's id. Re-saving the
+// source updates that same transaction in place; deleting the source removes
+// it. This shared helper does the create/update/remove so milk and herd stay
+// consistent.
+function upsertLinkedTransaction(transactions, id, linked){
+  const idx = transactions.findIndex(t => t.id === id);
+  if(!linked) return idx>=0 ? transactions.filter(t=>t.id!==id) : transactions;
+  if(idx>=0){
+    const next = transactions.slice();
+    next[idx] = linked;
+    return next;
+  }
+  return [...transactions, linked];
+}
+
 // ---------- Producción ↔ Cuentas ----------
-// The "Venta de leche" transaction generated from a milk record is keyed off
-// the record's own id, so re-saving the record updates that same transaction
-// instead of creating a duplicate, and deleting the record removes it.
 export const milkTransactionId = (milkRecordId) => "milk-" + milkRecordId;
 
 export function getLastMilkPrice(milkRecords){
@@ -352,22 +380,95 @@ export function computeMilkSaleTransaction(record){
   };
 }
 
-// Keeps the linked transaction in sync with the milk record: creates it,
-// updates it in place, or removes it if the record no longer qualifies.
 export function syncMilkSaleTransaction(transactions, record){
-  const id = milkTransactionId(record.id);
-  const linked = computeMilkSaleTransaction(record);
-  const idx = transactions.findIndex(t => t.id === id);
-  if(!linked) return idx>=0 ? transactions.filter(t=>t.id!==id) : transactions;
-  if(idx>=0){
-    const next = transactions.slice();
-    next[idx] = linked;
-    return next;
-  }
-  return [...transactions, linked];
+  return upsertLinkedTransaction(transactions, milkTransactionId(record.id), computeMilkSaleTransaction(record));
 }
 
 export function removeMilkSaleTransaction(transactions, milkRecordId){
-  const id = milkTransactionId(milkRecordId);
-  return transactions.filter(t => t.id !== id);
+  return transactions.filter(t => t.id !== milkTransactionId(milkRecordId));
+}
+
+// ---------- Ganado: nacimientos y mortalidad ----------
+// Births and deaths are simple counted events (no money attached).
+export function parseHerdEventForm(fields){
+  const type = HERD_EVENT_TYPES.includes(fields.type) ? fields.type : null;
+  if(!type || !isIsoDate(fields.date)) return { valid:false };
+  const count = Math.round(parseFloat(fields.count));
+  if(!(count > 0)) return { valid:false };
+  return {
+    valid: true,
+    record: {
+      id: fields.id || uid(),
+      type,
+      date: fields.date,
+      count,
+      note: (fields.note||"").trim(),
+    },
+  };
+}
+
+// Net change in head from recorded events: births add, deaths subtract. It's a
+// movement tally, not a live census (it doesn't know the starting herd size),
+// so the UI labels it as a variation.
+export function summarizeHerd(events){
+  const by = { "Nacimiento":0, "Muerte":0 };
+  events.forEach(e => { if(by[e.type] != null) by[e.type] += e.count; });
+  return { nacimientos: by["Nacimiento"], muertes: by["Muerte"], neto: by["Nacimiento"] - by["Muerte"] };
+}
+
+// ---------- Ganado de levante (per-animal buy/sell) ----------
+// Each levante animal is bought, raised ("En levante"), and later sold. Its
+// profit is only realized once sold: precio de venta − precio de compra. This
+// registry is self-contained — it tracks its own ledger and doesn't push
+// transactions into Cuentas.
+const optionalNumber = (v) => {
+  if(v === "" || v == null) return null;
+  const n = parseFloat(v);
+  return isFinite(n) ? n : null;
+};
+
+export function parseLevanteForm(fields){
+  const name = (fields.name||"").trim();
+  const purchasePrice = parseFloat(fields.purchasePrice);
+  if(!name || !isIsoDate(fields.purchaseDate) || !isFinite(purchasePrice) || purchasePrice < 0){
+    return { valid:false };
+  }
+  const sold = fields.estado === "Vendido";
+  const salePrice = sold ? parseFloat(fields.salePrice) : NaN;
+  if(sold && (!isIsoDate(fields.saleDate) || !isFinite(salePrice) || salePrice < 0)){
+    return { valid:false };
+  }
+  return {
+    valid: true,
+    record: {
+      id: fields.id || uid(),
+      name,
+      purchaseDate: fields.purchaseDate,
+      purchasePrice,
+      purchaseWeight: optionalNumber(fields.purchaseWeight),
+      estado: sold ? "Vendido" : "En levante",
+      saleDate: sold ? fields.saleDate : null,
+      salePrice: sold ? salePrice : null,
+      saleWeight: sold ? optionalNumber(fields.saleWeight) : null,
+    },
+  };
+}
+
+export function levanteGanancia(animal){
+  if(animal.estado !== "Vendido") return null;
+  if(typeof animal.salePrice !== "number" || typeof animal.purchasePrice !== "number") return null;
+  return animal.salePrice - animal.purchasePrice;
+}
+
+// Splits the herd into animals sold within the date range (each with its
+// realized ganancia, newest sale first) and animals still being raised (no
+// ganancia yet), plus the accumulated ganancia over the range.
+export function computeLevanteProfit(animals, from, to){
+  const sold = animals
+    .filter(a => a.estado === "Vendido" && isIsoDate(a.saleDate) && a.saleDate >= from && a.saleDate <= to)
+    .map(a => ({ ...a, ganancia: levanteGanancia(a) }))
+    .sort((x, y) => y.saleDate.localeCompare(x.saleDate));
+  const totalGanancia = sold.reduce((s, a) => s + a.ganancia, 0);
+  const enLevante = animals.filter(a => a.estado !== "Vendido");
+  return { sold, totalGanancia, enLevante };
 }

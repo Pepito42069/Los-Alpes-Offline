@@ -10,6 +10,8 @@ import {
   milkTransactionId, getLastMilkPrice, computeMilkSaleTransaction,
   syncMilkSaleTransaction, removeMilkSaleTransaction,
   COW_STATES, cowEstado, isProductionCow, milkFormCows, computeCowProfitability,
+  HERD_EVENT_TYPES, parseHerdEventForm, summarizeHerd,
+  LEVANTE_STATES, parseLevanteForm, levanteGanancia, computeLevanteProfit,
 } from "../app-logic.js";
 
 function makeFakeStorage(){
@@ -91,8 +93,34 @@ describe("sanitizeAppData", () => {
       inventory: [{ id: "2", name: "Sal", quantity: 5, unitValue: 100 }],
       cows: [{ id: "3", name: "Lola" }],
       milkRecords: [{ id: "4", date: "2026-01-01" }],
+      herdEvents: [{ id: "5", type: "Muerte", date: "2026-01-04", count: 1 }],
+      levanteAnimals: [{ id: "6", name: "Novillo 1", purchaseDate: "2026-01-01", purchasePrice: 800000, estado: "En levante" }],
     };
     expect(sanitizeAppData(data)).toEqual(data);
+  });
+
+  it("drops levante animals without a name, valid purchase date, or numeric purchase price", () => {
+    const data = {
+      levanteAnimals: [
+        { id: "ok", name: "N1", purchaseDate: "2026-01-01", purchasePrice: 800000 },
+        { id: "no-name", purchaseDate: "2026-01-01", purchasePrice: 800000 },
+        { id: "bad-date", name: "N2", purchaseDate: "ayer", purchasePrice: 800000 },
+        { id: "bad-price", name: "N3", purchaseDate: "2026-01-01", purchasePrice: "mucho" },
+      ],
+    };
+    expect(sanitizeAppData(data).levanteAnimals).toEqual([{ id: "ok", name: "N1", purchaseDate: "2026-01-01", purchasePrice: 800000 }]);
+  });
+
+  it("drops herd events with an invalid type, date, or count", () => {
+    const data = {
+      herdEvents: [
+        { id: "ok", type: "Nacimiento", date: "2026-01-01", count: 2 },
+        { id: "bad-type", type: "Boda", date: "2026-01-01", count: 1 },
+        { id: "bad-date", type: "Muerte", date: "ayer", count: 1 },
+        { id: "bad-count", type: "Muerte", date: "2026-01-01", count: "dos" },
+      ],
+    };
+    expect(sanitizeAppData(data).herdEvents).toEqual([{ id: "ok", type: "Nacimiento", date: "2026-01-01", count: 2 }]);
   });
 
   it("drops transactions missing a valid date, type, or numeric amount", () => {
@@ -148,9 +176,9 @@ describe("sanitizeAppData", () => {
   });
 
   it("treats non-array or missing top-level fields as empty lists instead of throwing", () => {
-    expect(sanitizeAppData({})).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [] });
-    expect(sanitizeAppData({ transactions: "not-an-array" })).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [] });
-    expect(sanitizeAppData(null)).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [] });
+    expect(sanitizeAppData({})).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [], herdEvents: [], levanteAnimals: [] });
+    expect(sanitizeAppData({ transactions: "not-an-array" })).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [], herdEvents: [], levanteAnimals: [] });
+    expect(sanitizeAppData(null)).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [], herdEvents: [], levanteAnimals: [] });
   });
 
   it("rejects array entries (not plain records)", () => {
@@ -161,13 +189,13 @@ describe("sanitizeAppData", () => {
 describe("loadData / saveData", () => {
   it("returns an empty default shape when storage is empty", () => {
     const storage = makeFakeStorage();
-    expect(loadData(storage)).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [] });
+    expect(loadData(storage)).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [], herdEvents: [], levanteAnimals: [] });
   });
 
   it("falls back to defaults when stored JSON is corrupt", () => {
     const storage = makeFakeStorage();
     storage.setItem(STORAGE_KEY, "{not valid json");
-    expect(loadData(storage)).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [] });
+    expect(loadData(storage)).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [], herdEvents: [], levanteAnimals: [] });
   });
 
   it("sanitizes malformed records instead of letting a later render crash", () => {
@@ -185,6 +213,8 @@ describe("loadData / saveData", () => {
       inventory: [{ id: "2", name: "Sal", category: "Concentrado y sales", quantity: 5, unit: "kg", unitValue: 100, minStock: 1, lastUpdated: "2026-01-01" }],
       cows: [{ id: "3", name: "Lola" }],
       milkRecords: [{ id: "4", date: "2026-01-01", perCow: { 3: 10 }, farmConsumption: 1, calfConsumption: 1, deliveredToMilkman: 8, note: "" }],
+      herdEvents: [{ id: "5", type: "Nacimiento", date: "2026-01-02", count: 1, note: "" }],
+      levanteAnimals: [{ id: "6", name: "Novillo 1", purchaseDate: "2026-01-01", purchasePrice: 800000, purchaseWeight: 180, estado: "Vendido", saleDate: "2026-06-01", salePrice: 1400000, saleWeight: 320 }],
     };
     saveData(storage, state);
     expect(loadData(storage)).toEqual(state);
@@ -388,6 +418,8 @@ describe("buildBackupPayload / parseBackupData", () => {
     inventory: [{ id: "2", name: "Sal", quantity: 5, unitValue: 100 }],
     cows: [{ id: "3", name: "Lola" }],
     milkRecords: [{ id: "4", date: "2026-01-01" }],
+    herdEvents: [{ id: "5", type: "Nacimiento", date: "2026-01-03", count: 4, note: "" }],
+    levanteAnimals: [{ id: "6", name: "Novillo 1", purchaseDate: "2026-01-01", purchasePrice: 900000, estado: "En levante" }],
   };
 
   it("serializes state plus an exportedAt timestamp", () => {
@@ -405,7 +437,7 @@ describe("buildBackupPayload / parseBackupData", () => {
 
   it("defaults missing arrays to empty when importing a partial backup", () => {
     const result = parseBackupData(JSON.stringify({ transactions: state.transactions }));
-    expect(result).toEqual({ ok: true, data: { transactions: state.transactions, inventory: [], cows: [], milkRecords: [] } });
+    expect(result).toEqual({ ok: true, data: { transactions: state.transactions, inventory: [], cows: [], milkRecords: [], herdEvents: [], levanteAnimals: [] } });
   });
 
   it("drops malformed records from an imported backup instead of crashing later", () => {
@@ -790,5 +822,151 @@ describe("milk production ↔ accounts linking", () => {
       const other = { id: "manual-tx", type: "gasto", category: "Transporte", amount: 500, date: "2026-01-01" };
       expect(removeMilkSaleTransaction([other], "rec1")).toEqual([other]);
     });
+  });
+});
+
+
+describe("parseHerdEventForm (nacimientos y mortalidad)", () => {
+  it("parses a birth event with a positive integer count and trimmed note", () => {
+    const { valid, record } = parseHerdEventForm({ type: "Nacimiento", date: "2026-02-01", count: "2", note: "  mellizos  " });
+    expect(valid).toBe(true);
+    expect(record).toMatchObject({ type: "Nacimiento", date: "2026-02-01", count: 2, note: "mellizos" });
+    expect(record.id).toMatch(/^[a-z0-9]+$/);
+    expect(record).not.toHaveProperty("amount");
+  });
+
+  it("rounds the count to a whole number of head", () => {
+    expect(parseHerdEventForm({ type: "Muerte", date: "2026-02-01", count: "2.7" }).record.count).toBe(3);
+  });
+
+  it.each([
+    ["unknown type", { type: "Compra de levante", date: "2026-02-01", count: "1" }],
+    ["missing/invalid date", { type: "Nacimiento", date: "", count: "1" }],
+    ["zero count", { type: "Nacimiento", date: "2026-02-01", count: "0" }],
+    ["negative count", { type: "Nacimiento", date: "2026-02-01", count: "-1" }],
+    ["non-numeric count", { type: "Nacimiento", date: "2026-02-01", count: "x" }],
+  ])("rejects %s", (_label, fields) => {
+    expect(parseHerdEventForm(fields).valid).toBe(false);
+  });
+
+  it("preserves an existing id when editing", () => {
+    expect(parseHerdEventForm({ id: "e1", type: "Muerte", date: "2026-02-01", count: "1" }).record.id).toBe("e1");
+  });
+});
+
+describe("summarizeHerd", () => {
+  it("tallies births and deaths and computes the net variation", () => {
+    const events = [
+      { type: "Nacimiento", count: 3 },
+      { type: "Muerte", count: 1 },
+      { type: "Nacimiento", count: 1 },
+    ];
+    expect(summarizeHerd(events)).toEqual({ nacimientos: 4, muertes: 1, neto: 3 });
+  });
+
+  it("returns all zeros for no events", () => {
+    expect(summarizeHerd([])).toEqual({ nacimientos: 0, muertes: 0, neto: 0 });
+  });
+});
+
+describe("HERD_EVENT_TYPES", () => {
+  it("exposes the two event types", () => {
+    expect(HERD_EVENT_TYPES).toEqual(["Nacimiento", "Muerte"]);
+  });
+});
+
+describe("parseLevanteForm", () => {
+  it("parses an animal still being raised (En levante) with only purchase data", () => {
+    const { valid, record } = parseLevanteForm({
+      name: "  Novillo 1  ", purchaseDate: "2026-01-10", purchasePrice: "800000", purchaseWeight: "180",
+    });
+    expect(valid).toBe(true);
+    expect(record).toMatchObject({
+      name: "Novillo 1", purchaseDate: "2026-01-10", purchasePrice: 800000, purchaseWeight: 180,
+      estado: "En levante", saleDate: null, salePrice: null, saleWeight: null,
+    });
+    expect(record.id).toMatch(/^[a-z0-9]+$/);
+  });
+
+  it("parses a sold animal with its sale data", () => {
+    const { valid, record } = parseLevanteForm({
+      name: "Novillo 2", purchaseDate: "2026-01-10", purchasePrice: "800000",
+      estado: "Vendido", saleDate: "2026-06-01", salePrice: "1400000", saleWeight: "320",
+    });
+    expect(valid).toBe(true);
+    expect(record).toMatchObject({
+      estado: "Vendido", saleDate: "2026-06-01", salePrice: 1400000, saleWeight: 320,
+    });
+  });
+
+  it("leaves optional weights null when blank", () => {
+    const { record } = parseLevanteForm({ name: "N", purchaseDate: "2026-01-10", purchasePrice: "800000" });
+    expect(record.purchaseWeight).toBeNull();
+  });
+
+  it.each([
+    ["missing name", { name: "", purchaseDate: "2026-01-10", purchasePrice: "800000" }],
+    ["invalid purchase date", { name: "N", purchaseDate: "ayer", purchasePrice: "800000" }],
+    ["non-numeric purchase price", { name: "N", purchaseDate: "2026-01-10", purchasePrice: "mucho" }],
+    ["negative purchase price", { name: "N", purchaseDate: "2026-01-10", purchasePrice: "-1" }],
+  ])("rejects %s", (_label, fields) => {
+    expect(parseLevanteForm(fields).valid).toBe(false);
+  });
+
+  it("rejects a Vendido animal missing its sale date or price", () => {
+    expect(parseLevanteForm({ name: "N", purchaseDate: "2026-01-10", purchasePrice: "800000", estado: "Vendido", salePrice: "900000" }).valid).toBe(false);
+    expect(parseLevanteForm({ name: "N", purchaseDate: "2026-01-10", purchasePrice: "800000", estado: "Vendido", saleDate: "2026-06-01" }).valid).toBe(false);
+  });
+
+  it("preserves an existing id when editing", () => {
+    expect(parseLevanteForm({ id: "a1", name: "N", purchaseDate: "2026-01-10", purchasePrice: "800000" }).record.id).toBe("a1");
+  });
+
+  it("exposes the two levante states", () => {
+    expect(LEVANTE_STATES).toEqual(["En levante", "Vendido"]);
+  });
+});
+
+describe("levanteGanancia", () => {
+  it("is sale price minus purchase price for a sold animal", () => {
+    expect(levanteGanancia({ estado: "Vendido", purchasePrice: 800000, salePrice: 1400000 })).toBe(600000);
+  });
+  it("can be negative (a loss)", () => {
+    expect(levanteGanancia({ estado: "Vendido", purchasePrice: 800000, salePrice: 700000 })).toBe(-100000);
+  });
+  it("is null while the animal is still being raised", () => {
+    expect(levanteGanancia({ estado: "En levante", purchasePrice: 800000, salePrice: null })).toBeNull();
+  });
+});
+
+describe("computeLevanteProfit", () => {
+  const animals = [
+    { id: "a1", name: "N1", purchaseDate: "2026-01-05", purchasePrice: 800000, estado: "Vendido", saleDate: "2026-03-10", salePrice: 1400000 },
+    { id: "a2", name: "N2", purchaseDate: "2026-01-06", purchasePrice: 900000, estado: "Vendido", saleDate: "2026-05-20", salePrice: 1100000 },
+    { id: "a3", name: "N3", purchaseDate: "2026-02-01", purchasePrice: 850000, estado: "En levante", saleDate: null, salePrice: null },
+    { id: "a4", name: "N4", purchaseDate: "2026-01-01", purchasePrice: 700000, estado: "Vendido", saleDate: "2026-08-01", salePrice: 1500000 }, // sold out of range
+  ];
+
+  it("lists animals sold within the range with their ganancia, newest sale first", () => {
+    const { sold } = computeLevanteProfit(animals, "2026-01-01", "2026-06-30");
+    expect(sold.map(a => a.id)).toEqual(["a2", "a1"]);
+    expect(sold.find(a => a.id === "a1").ganancia).toBe(600000);
+    expect(sold.find(a => a.id === "a2").ganancia).toBe(200000);
+  });
+
+  it("accumulates total ganancia over the range only", () => {
+    const { totalGanancia } = computeLevanteProfit(animals, "2026-01-01", "2026-06-30");
+    expect(totalGanancia).toBe(800000); // 600000 + 200000, a4 excluded (out of range)
+  });
+
+  it("lists still-being-raised animals separately, regardless of range", () => {
+    const { enLevante } = computeLevanteProfit(animals, "2026-01-01", "2026-06-30");
+    expect(enLevante.map(a => a.id)).toEqual(["a3"]);
+  });
+
+  it("returns empty results and zero total when nothing sold in range", () => {
+    const { sold, totalGanancia } = computeLevanteProfit(animals, "2030-01-01", "2030-12-31");
+    expect(sold).toEqual([]);
+    expect(totalGanancia).toBe(0);
   });
 });
