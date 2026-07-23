@@ -146,18 +146,24 @@ describe("computeSummary", () => {
 
 // ---------- Producción de leche ----------
 describe("totalProducido", () => {
-  it("sums numeric perCow values", () => {
+  it("sums am+pm for two-ordeño (object) perCow entries", () => {
+    expect(totalProducido({ perCow: { a: { am: 5, pm: 3 }, b: { am: 2, pm: 1.5 } } })).toBe(11.5);
+  });
+  it("still sums legacy plain-number perCow entries", () => {
     expect(totalProducido({ perCow: { a: 5, b: 3.5 } })).toBe(8.5);
   });
+  it("handles a mix of object and legacy numeric entries", () => {
+    expect(totalProducido({ perCow: { a: { am: 4, pm: 2 }, b: 3 } })).toBe(9);
+  });
   it("treats missing or non-numeric values as zero", () => {
-    expect(totalProducido({ perCow: { a: "not-a-number" } })).toBe(0);
+    expect(totalProducido({ perCow: { a: "not-a-number", b: { am: "x", pm: null } } })).toBe(0);
     expect(totalProducido({})).toBe(0);
   });
 });
 
 describe("computeMilkBalance", () => {
   it("computes producido minus total consumption", () => {
-    const record = { perCow: { a: 10, b: 5 }, farmConsumption: 2, calfConsumption: 1, deliveredToMilkman: 10 };
+    const record = { perCow: { a: { am: 6, pm: 4 }, b: { am: 3, pm: 2 } }, farmConsumption: 2, calfConsumption: 1, deliveredToMilkman: 10 };
     const { producido, usado, balance } = computeMilkBalance(record);
     expect(producido).toBe(15);
     expect(usado).toBe(13);
@@ -165,8 +171,15 @@ describe("computeMilkBalance", () => {
   });
 
   it("can be negative when consumption exceeds production", () => {
-    const record = { perCow: { a: 5 }, farmConsumption: 3, calfConsumption: 2, deliveredToMilkman: 4 };
+    const record = { perCow: { a: { am: 5, pm: 0 } }, farmConsumption: 3, calfConsumption: 2, deliveredToMilkman: 4 };
     expect(computeMilkBalance(record).balance).toBe(-4);
+  });
+
+  it("ignores calfConsumption when hasCalves is false, even if it wasn't zeroed out", () => {
+    const record = { perCow: { a: { am: 5, pm: 5 } }, farmConsumption: 1, calfConsumption: 4, deliveredToMilkman: 5, hasCalves: false };
+    const { usado, balance } = computeMilkBalance(record);
+    expect(usado).toBe(6);
+    expect(balance).toBe(4);
   });
 });
 
@@ -176,8 +189,8 @@ describe("computeMilkChartMax", () => {
   });
   it("returns the largest of producido/deliveredToMilkman across records", () => {
     const records = [
-      { perCow: { a: 3 }, deliveredToMilkman: 2 },
-      { perCow: { a: 1 }, deliveredToMilkman: 20 },
+      { perCow: { a: { am: 3, pm: 0 } }, deliveredToMilkman: 2 },
+      { perCow: { a: { am: 1, pm: 0 } }, deliveredToMilkman: 20 },
     ];
     expect(computeMilkChartMax(records)).toBe(20);
   });
@@ -344,24 +357,51 @@ describe("parseInventoryForm", () => {
 describe("parseMilkForm", () => {
   const cows = [{ id: "c1", name: "Lola" }, { id: "c2", name: "Manchas" }];
 
-  it("collects liters per cow and defaults consumption fields to zero", () => {
-    const getValue = makeGetValue({ date: "2026-01-01", cow_c1: "8", cow_c2: "" });
-    const { valid, record } = parseMilkForm(getValue, cows);
+  it("collects am/pm liters per cow and defaults consumption fields to zero", () => {
+    const getValue = makeGetValue({ date: "2026-01-01", am_c1: "5", pm_c1: "3" });
+    const { valid, record } = parseMilkForm(getValue, cows, true);
     expect(valid).toBe(true);
-    expect(record.perCow).toEqual({ c1: 8 });
+    expect(record.perCow).toEqual({ c1: { am: 5, pm: 3 } });
     expect(record.farmConsumption).toBe(0);
     expect(record.calfConsumption).toBe(0);
     expect(record.deliveredToMilkman).toBe(0);
+    expect(record.hasCalves).toBe(true);
+  });
+
+  it("includes a cow if only one of am/pm was entered", () => {
+    const getValue = makeGetValue({ date: "2026-01-01", am_c1: "5", pm_c1: "" });
+    const { record } = parseMilkForm(getValue, cows, true);
+    expect(record.perCow).toEqual({ c1: { am: 5, pm: 0 } });
+  });
+
+  it("omits a cow with no am/pm entry at all", () => {
+    const getValue = makeGetValue({ date: "2026-01-01", am_c1: "5", pm_c1: "3" });
+    const { record } = parseMilkForm(getValue, cows, true);
+    expect(record.perCow).not.toHaveProperty("c2");
   });
 
   it("is invalid without a date", () => {
     const getValue = makeGetValue({});
-    expect(parseMilkForm(getValue, cows).valid).toBe(false);
+    expect(parseMilkForm(getValue, cows, true).valid).toBe(false);
   });
 
   it("treats a non-numeric cow entry as zero but still includes it", () => {
-    const getValue = makeGetValue({ date: "2026-01-01", cow_c1: "not-a-number" });
+    const getValue = makeGetValue({ date: "2026-01-01", am_c1: "not-a-number", pm_c1: "" });
+    const { record } = parseMilkForm(getValue, cows, true);
+    expect(record.perCow).toEqual({ c1: { am: 0, pm: 0 } });
+  });
+
+  it("forces calfConsumption to zero and records hasCalves:false when there are no calves", () => {
+    const getValue = makeGetValue({ date: "2026-01-01", calfConsumption: "7" });
+    const { record } = parseMilkForm(getValue, cows, false);
+    expect(record.calfConsumption).toBe(0);
+    expect(record.hasCalves).toBe(false);
+  });
+
+  it("defaults hasCalves to true when not passed", () => {
+    const getValue = makeGetValue({ date: "2026-01-01", calfConsumption: "7" });
     const { record } = parseMilkForm(getValue, cows);
-    expect(record.perCow).toEqual({ c1: 0 });
+    expect(record.hasCalves).toBe(true);
+    expect(record.calfConsumption).toBe(7);
   });
 });
