@@ -62,6 +62,13 @@ export function totalProducido(record){
   }, 0);
 }
 
+// The amount delivered to the milkman is not entered by hand; it's derived
+// so the daily balance is zero by construction (any losses show up as a
+// discrepancy the farmer has to go re-check, not as slack in this field).
+export function computeDeliveredToMilkman(producido, farmConsumption, calfConsumption){
+  return producido - farmConsumption - calfConsumption;
+}
+
 export function computeMilkBalance(record){
   const producido = totalProducido(record);
   const calf = record.hasCalves===false ? 0 : record.calfConsumption;
@@ -170,16 +177,19 @@ export function parseMilkForm(getValue, cows, hasCalves = true){
       perCow[c.id] = { am: parseFloat(am)||0, pm: parseFloat(pm)||0 };
     }
   });
+  const farmConsumption = parseFloat(getValue("farmConsumption"))||0;
+  const calfConsumption = hasCalves ? (parseFloat(getValue("calfConsumption"))||0) : 0;
+  const producido = totalProducido({ perCow });
   return {
     valid: true,
     record: {
       id: getValue("id") || uid(),
       date,
       perCow,
-      farmConsumption: parseFloat(getValue("farmConsumption"))||0,
-      calfConsumption: hasCalves ? (parseFloat(getValue("calfConsumption"))||0) : 0,
+      farmConsumption,
+      calfConsumption,
       hasCalves,
-      deliveredToMilkman: parseFloat(getValue("deliveredToMilkman"))||0,
+      deliveredToMilkman: computeDeliveredToMilkman(producido, farmConsumption, calfConsumption),
       note: (getValue("note")||"").trim(),
     },
   };
