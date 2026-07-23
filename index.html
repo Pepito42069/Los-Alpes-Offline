@@ -106,26 +106,18 @@
 <nav id="tabnav" class="no-print"></nav>
 <main id="app"></main>
 
-<script>
-// ---------- Storage (100% local, no network) ----------
-const STORAGE_KEY = "finca-offline-data-v1";
-
-function loadData(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(raw) return JSON.parse(raw);
-  }catch(e){ console.error(e); }
-  return { transactions: [], inventory: [], cows: [], milkRecords: [] };
-}
-function saveData(){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    transactions: state.transactions, inventory: state.inventory,
-    cows: state.cows, milkRecords: state.milkRecords,
-  }));
-}
+<script type="module">
+import {
+  INCOME_CATS, EXPENSE_CATS, INV_CATS,
+  uid, fmtCOP, fmtDate, monthLabel, todayISO,
+  loadData, saveData,
+  computeSummary, totalProducido, computeMilkBalance, computeMilkChartMax,
+  findDuplicateMilkRecord, computeReport, buildTransactionsCsv, buildBackupPayload,
+  parseBackupData, parseTransactionForm, parseInventoryForm, parseMilkForm,
+} from "./app-logic.js";
 
 // ---------- State ----------
-const data0 = loadData();
+const data0 = loadData(localStorage);
 const state = {
   tab: "resumen",
   transactions: data0.transactions || [],
@@ -139,17 +131,6 @@ const state = {
   repFrom: (()=>{ const d=new Date(); d.setMonth(d.getMonth()-1); return d.toISOString().slice(0,10); })(),
   repTo: new Date().toISOString().slice(0,10),
 };
-
-const INCOME_CATS = ["Venta de leche","Venta de ganado de levante","Venta de terneros","Venta de descarte","Otros ingresos"];
-const EXPENSE_CATS = ["Concentrado y sales","Veterinario y medicamentos","Mano de obra","Pastos y potreros","Transporte","Mantenimiento","Otros gastos"];
-const INV_CATS = ["Concentrado y sales","Medicamentos veterinarios","Insumos de ordeño","Ganado (lotes)","Herramientas y equipo"];
-const PIE_COLORS = ["#9A3324","#B8791F","#5C7A4B","#3B5940","#C9584A","#7E9C6C"];
-
-const uid = () => Math.random().toString(36).slice(2,10);
-const fmtCOP = (n) => new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(n||0);
-const fmtDate = (iso) => { if(!iso) return ""; const d=new Date(iso+"T00:00:00"); return d.toLocaleDateString("es-CO",{day:"2-digit",month:"short",year:"numeric"}); };
-const monthLabel = (iso) => { const d=new Date(iso+"T00:00:00"); return d.toLocaleDateString("es-CO",{month:"short",year:"2-digit"}); };
-const todayISO = () => new Date().toISOString().slice(0,10);
 
 function setTab(t){ state.tab=t; render(); }
 window.setTab = setTab;
@@ -175,21 +156,7 @@ function renderNav(){
 
 // ---------- Resumen ----------
 function viewResumen(){
-  const ingresos = state.transactions.filter(t=>t.type==="ingreso").reduce((s,t)=>s+t.amount,0);
-  const gastos = state.transactions.filter(t=>t.type==="gasto").reduce((s,t)=>s+t.amount,0);
-  const balance = ingresos-gastos;
-  const valorInv = state.inventory.reduce((s,i)=>s+i.quantity*i.unitValue,0);
-
-  const map = {};
-  state.transactions.forEach(t=>{
-    const key = t.date.slice(0,7);
-    if(!map[key]) map[key] = { key, label: monthLabel(t.date), ingreso:0, gasto:0 };
-    map[key][t.type] += t.amount;
-  });
-  const monthly = Object.values(map).sort((a,b)=>a.key.localeCompare(b.key)).slice(-6);
-  const maxVal = Math.max(1, ...monthly.flatMap(m=>[m.ingreso,m.gasto]));
-
-  const lowStock = state.inventory.filter(i=>i.minStock!=null && i.quantity<=i.minStock);
+  const { ingresos, gastos, balance, valorInv, monthly, maxVal, lowStock } = computeSummary(state);
 
   let html = `<div class="card"><div class="grid2">
     <div><div class="stat-label">Balance</div><div class="stat-value ${balance>=0?'ok':'warn'}">${fmtCOP(balance)}</div></div>
@@ -356,7 +323,7 @@ function viewProduccion(){
 
   const records = [...state.milkRecords].sort((a,b)=>b.date.localeCompare(a.date));
   const recent = [...state.milkRecords].sort((a,b)=>a.date.localeCompare(b.date)).slice(-10);
-  const maxVal = Math.max(1, ...recent.flatMap(r=>[totalProducido(r), r.deliveredToMilkman]));
+  const maxVal = computeMilkChartMax(recent);
 
   return `
   <div class="card">
@@ -419,9 +386,7 @@ function viewProduccion(){
     <p class="muted" style="margin-bottom:6px">Balance = producido − (consumo finca + terneros + lechero). Si no da cero, revisa la medición o pérdidas.</p>
     ${records.length===0?`<p class="empty">Sin registros aún.</p>`:
       records.map(r=>{
-        const prod = totalProducido(r);
-        const usado = r.farmConsumption + r.calfConsumption + r.deliveredToMilkman;
-        const bal = prod - usado;
+        const { producido: prod, balance: bal } = computeMilkBalance(r);
         return `<div class="row">
           <div style="min-width:0">
             <div style="font-weight:600;font-size:14px">${fmtDate(r.date)}</div>
@@ -437,22 +402,9 @@ function viewProduccion(){
   </div>`;
 }
 
-function totalProducido(record){
-  return Object.values(record.perCow || {}).reduce((s,v)=>s+(parseFloat(v)||0), 0);
-}
-
 // ---------- Reportes ----------
 function viewReportes(){
-  const filtered = state.transactions.filter(t=>t.date>=state.repFrom && t.date<=state.repTo).sort((a,b)=>a.date.localeCompare(b.date));
-  const ingresos = filtered.filter(t=>t.type==="ingreso").reduce((s,t)=>s+t.amount,0);
-  const gastos = filtered.filter(t=>t.type==="gasto").reduce((s,t)=>s+t.amount,0);
-
-  const catMap = {};
-  filtered.filter(t=>t.type==="gasto").forEach(t=>{ catMap[t.category]=(catMap[t.category]||0)+t.amount; });
-  const catList = Object.entries(catMap).map(([name,value],i)=>({name,value,color:PIE_COLORS[i%PIE_COLORS.length]}));
-  const total = catList.reduce((s,c)=>s+c.value,0) || 1;
-  let acc = 0;
-  const gradient = catList.map(c=>{ const start=acc/total*360; acc+=c.value; const end=acc/total*360; return `${c.color} ${start}deg ${end}deg`; }).join(", ");
+  const { filtered, ingresos, gastos, catList, gradient } = computeReport(state.transactions, state.repFrom, state.repTo);
 
   return `
   <div class="card no-print">
@@ -506,20 +458,15 @@ function bindEvents(){
     txForm.addEventListener("submit", (ev)=>{
       ev.preventDefault();
       const fd = new FormData(txForm);
-      const amt = parseFloat(fd.get("amount"));
-      if(!amt || amt<=0 || !fd.get("date")) return;
-      const rec = {
-        id: fd.get("id") || uid(),
-        type: fd.get("type"),
-        category: fd.get("category"),
-        amount: amt,
-        date: fd.get("date"),
-        note: (fd.get("note")||"").trim(),
-      };
+      const { valid, record: rec } = parseTransactionForm({
+        id: fd.get("id"), type: fd.get("type"), category: fd.get("category"),
+        amount: fd.get("amount"), date: fd.get("date"), note: fd.get("note"),
+      });
+      if(!valid) return;
       const idx = state.transactions.findIndex(t=>t.id===rec.id);
       if(idx>=0) state.transactions[idx]=rec; else state.transactions.push(rec);
       state.editingTx = null; window._txType = null;
-      saveData(); render();
+      saveData(localStorage, state); render();
     });
     const cancel = document.getElementById("tx-cancel");
     if(cancel) cancel.addEventListener("click", ()=>{ state.editingTx=null; window._txType=null; render(); });
@@ -533,7 +480,7 @@ function bindEvents(){
   document.querySelectorAll("[data-del-tx]").forEach(b=>b.addEventListener("click",()=>{
     if(confirm("¿Eliminar este movimiento?")){
       state.transactions = state.transactions.filter(t=>t.id!==b.dataset.delTx);
-      saveData(); render();
+      saveData(localStorage, state); render();
     }
   }));
   document.querySelectorAll("[data-filter]").forEach(b=>b.addEventListener("click",()=>{
@@ -545,23 +492,16 @@ function bindEvents(){
     invForm.addEventListener("submit",(ev)=>{
       ev.preventDefault();
       const fd = new FormData(invForm);
-      const q = parseFloat(fd.get("quantity"));
-      const uv = parseFloat(fd.get("unitValue"));
-      if(!fd.get("name") || isNaN(q) || isNaN(uv)) return;
-      const rec = {
-        id: fd.get("id") || uid(),
-        name: fd.get("name").trim(),
-        category: fd.get("category"),
-        quantity: q,
-        unit: (fd.get("unit")||"unidades").trim(),
-        unitValue: uv,
-        minStock: fd.get("minStock")===""?null:parseFloat(fd.get("minStock")),
-        lastUpdated: todayISO(),
-      };
+      const { valid, record: rec } = parseInventoryForm({
+        id: fd.get("id"), name: fd.get("name"), category: fd.get("category"),
+        quantity: fd.get("quantity"), unit: fd.get("unit"), unitValue: fd.get("unitValue"),
+        minStock: fd.get("minStock"),
+      });
+      if(!valid) return;
       const idx = state.inventory.findIndex(i=>i.id===rec.id);
       if(idx>=0) state.inventory[idx]=rec; else state.inventory.push(rec);
       state.editingInv = null;
-      saveData(); render();
+      saveData(localStorage, state); render();
     });
     const cancel = document.getElementById("inv-cancel");
     if(cancel) cancel.addEventListener("click",()=>{ state.editingInv=null; render(); });
@@ -572,7 +512,7 @@ function bindEvents(){
   document.querySelectorAll("[data-del-inv]").forEach(b=>b.addEventListener("click",()=>{
     if(confirm("¿Eliminar este ítem?")){
       state.inventory = state.inventory.filter(i=>i.id!==b.dataset.delInv);
-      saveData(); render();
+      saveData(localStorage, state); render();
     }
   }));
 
@@ -584,13 +524,13 @@ function bindEvents(){
       const name = (fd.get("cowName")||"").trim();
       if(!name) return;
       state.cows.push({ id: uid(), name });
-      saveData(); render();
+      saveData(localStorage, state); render();
     });
   }
   document.querySelectorAll("[data-del-cow]").forEach(b=>b.addEventListener("click",()=>{
     if(confirm("¿Eliminar esta vaca? Sus litros ya registrados no se borran.")){
       state.cows = state.cows.filter(c=>c.id!==b.dataset.delCow);
-      saveData(); render();
+      saveData(localStorage, state); render();
     }
   }));
 
@@ -599,30 +539,22 @@ function bindEvents(){
     milkForm.addEventListener("submit",(ev)=>{
       ev.preventDefault();
       const fd = new FormData(milkForm);
-      const date = fd.get("date");
-      if(!date) return;
-      const perCow = {};
-      state.cows.forEach(c=>{
-        const v = fd.get("cow_"+c.id);
-        if(v!==null && v!=="") perCow[c.id] = parseFloat(v)||0;
-      });
-      const rec = {
-        id: fd.get("id") || uid(),
-        date,
-        perCow,
-        farmConsumption: parseFloat(fd.get("farmConsumption"))||0,
-        calfConsumption: parseFloat(fd.get("calfConsumption"))||0,
-        deliveredToMilkman: parseFloat(fd.get("deliveredToMilkman"))||0,
-        note: (fd.get("note")||"").trim(),
-      };
+      const { valid, record: rec } = parseMilkForm((name)=>fd.get(name), state.cows);
+      if(!valid) return;
       const editIdx = state.milkRecords.findIndex(r=>r.id===rec.id);
-      const dateIdx = state.milkRecords.findIndex(r=>r.date===rec.date && r.id!==rec.id);
-      if(editIdx>=0) state.milkRecords[editIdx]=rec;
-      else if(dateIdx>=0){
-        if(confirm("Ya existe un registro para esa fecha. ¿Reemplazarlo?")) state.milkRecords[dateIdx]=rec; else return;
-      } else state.milkRecords.push(rec);
+      if(editIdx>=0){
+        state.milkRecords[editIdx]=rec;
+      } else {
+        const dup = findDuplicateMilkRecord(state.milkRecords, rec);
+        if(dup){
+          if(!confirm("Ya existe un registro para esa fecha. ¿Reemplazarlo?")) return;
+          state.milkRecords[state.milkRecords.indexOf(dup)] = rec;
+        } else {
+          state.milkRecords.push(rec);
+        }
+      }
       state.editingMilk = null;
-      saveData(); render();
+      saveData(localStorage, state); render();
     });
     const cancel = document.getElementById("milk-cancel");
     if(cancel) cancel.addEventListener("click",()=>{ state.editingMilk=null; render(); });
@@ -633,7 +565,7 @@ function bindEvents(){
   document.querySelectorAll("[data-del-milk]").forEach(b=>b.addEventListener("click",()=>{
     if(confirm("¿Eliminar este registro diario?")){
       state.milkRecords = state.milkRecords.filter(r=>r.id!==b.dataset.delMilk);
-      saveData(); render();
+      saveData(localStorage, state); render();
     }
   }));
 
@@ -645,14 +577,13 @@ function bindEvents(){
   const exportCsv = document.getElementById("export-csv");
   if(exportCsv) exportCsv.addEventListener("click", ()=>{
     const filtered = state.transactions.filter(t=>t.date>=state.repFrom && t.date<=state.repTo);
-    let csv = "Fecha,Tipo,Categoria,Monto,Nota\n";
-    filtered.forEach(t=>{ csv += `${t.date},${t.type},"${t.category}",${t.amount},"${(t.note||'').replace(/"/g,'""')}"\n`; });
+    const csv = buildTransactionsCsv(filtered);
     downloadFile(csv, `finca-cuentas-${state.repFrom}_a_${state.repTo}.csv`, "text/csv");
   });
 
   const exportBackup = document.getElementById("export-backup");
   if(exportBackup) exportBackup.addEventListener("click", ()=>{
-    const payload = JSON.stringify({ transactions: state.transactions, inventory: state.inventory, cows: state.cows, milkRecords: state.milkRecords, exportedAt: new Date().toISOString() }, null, 2);
+    const payload = buildBackupPayload(state);
     downloadFile(payload, `finca-respaldo-${todayISO()}.json`, "application/json");
   });
 
@@ -662,18 +593,15 @@ function bindEvents(){
     if(!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      try{
-        const parsed = JSON.parse(reader.result);
-        if(!confirm("Esto reemplazará todos los datos de este celular por los del archivo importado. ¿Continuar?")) return;
-        state.transactions = parsed.transactions || [];
-        state.inventory = parsed.inventory || [];
-        state.cows = parsed.cows || [];
-        state.milkRecords = parsed.milkRecords || [];
-        saveData(); render();
-        alert("Respaldo importado correctamente.");
-      }catch(e){
-        alert("El archivo no es un respaldo válido.");
-      }
+      const result = parseBackupData(reader.result);
+      if(!result.ok){ alert("El archivo no es un respaldo válido."); return; }
+      if(!confirm("Esto reemplazará todos los datos de este celular por los del archivo importado. ¿Continuar?")) return;
+      state.transactions = result.data.transactions;
+      state.inventory = result.data.inventory;
+      state.cows = result.data.cows;
+      state.milkRecords = result.data.milkRecords;
+      saveData(localStorage, state); render();
+      alert("Respaldo importado correctamente.");
     };
     reader.readAsText(file);
   });
