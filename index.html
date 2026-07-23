@@ -172,7 +172,7 @@ import {
   INCOME_CATS, EXPENSE_CATS, INV_CATS, UNIT_OPTIONS,
   uid, fmtCOP, fmtDate, monthLabel, todayISO, escapeHtml as esc,
   loadData, saveData,
-  computeSummary, totalProducido, computeDeliveredToMilkman, computeMilkBalance, computeMilkChartMax,
+  computeSummary, totalProducidoByOrdeno, computeMilkChartMax,
   findDuplicateMilkRecord, computeReport, buildTransactionsCsv, buildBackupPayload,
   parseBackupData, parseTransactionForm, parseInventoryForm, parseMilkForm,
 } from "./app-logic.js";
@@ -420,14 +420,8 @@ function viewProduccion(){
       <div class="field"><label>Fecha</label>
         <input type="date" name="date" value="${em?esc(em.date):todayISO()}" required></div>
       ${cowsBlock}
-      <div class="fields2">
-        <div class="field"><label>Consumo en la finca (L)</label>
-          <input class="mono" type="number" step="0.1" min="0" name="farmConsumption" value="${em?esc(em.farmConsumption):''}" placeholder="0"></div>
-        <div class="field"><label>Se lleva el lechero (L)</label>
-          <div id="lechero-preview" class="mono" style="padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--paper);font-weight:700">0.0 L</div>
-          <div class="muted" style="margin-top:2px">Se calcula solo: producido − finca − terneros</div>
-        </div>
-      </div>
+      <div class="field"><label>Consumo en la finca (L)</label>
+        <input class="mono" type="number" step="0.1" min="0" name="farmConsumption" value="${em?esc(em.farmConsumption):''}" placeholder="0"></div>
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;cursor:pointer">
         <input type="checkbox" id="has-calves-toggle" style="width:auto" ${hasCalves?'checked':''}>
         <span style="font-weight:600;color:var(--ink-faint)">Hay terneros lactando en este período</span>
@@ -446,35 +440,36 @@ function viewProduccion(){
 
   ${recent.length>0?`
   <div class="card">
-    <div style="font-weight:700;color:var(--green);margin-bottom:4px;font-size:14px">Producido vs. entregado al lechero (últimos días)</div>
-    <div class="bars">${recent.map(r=>`
+    <div style="font-weight:700;color:var(--green);margin-bottom:4px;font-size:14px">Producción por ordeño (últimos días)</div>
+    <div class="bars">${recent.map(r=>{
+      const { am, pm } = totalProducidoByOrdeno(r);
+      return `
       <div class="bar-group">
         <div class="bar-pair">
-          <div class="bar" style="height:${(totalProducido(r)/maxVal*120)||0}px;background:var(--olive)"></div>
-          <div class="bar" style="height:${(r.deliveredToMilkman/maxVal*120)||0}px;background:var(--ochre)"></div>
+          <div class="bar" style="height:${(am/maxVal*120)||0}px;background:var(--olive)"></div>
+          <div class="bar" style="height:${(pm/maxVal*120)||0}px;background:var(--ochre)"></div>
         </div>
         <div style="font-size:9px;color:var(--ink-faint)">${fmtDate(r.date).slice(0,6)}</div>
-      </div>`).join("")}
+      </div>`;
+    }).join("")}
     </div>
     <div style="display:flex;gap:14px;margin-top:8px;font-size:11px">
-      <span><span class="dot" style="background:var(--olive)"></span> Producido</span>
-      <span><span class="dot" style="background:var(--ochre)"></span> Lechero</span>
+      <span><span class="dot" style="background:var(--olive)"></span> Mañana</span>
+      <span><span class="dot" style="background:var(--ochre)"></span> Tarde</span>
     </div>
   </div>`:""}
 
   <div class="card">
-    <div style="font-weight:700;color:var(--green);margin-bottom:4px;font-size:14px">Balance diario</div>
-    <p class="muted" style="margin-bottom:6px">El lechero se calcula solo (producido − finca − terneros), así que el balance normalmente da cero. Si ves un balance negativo en algún día, revisa las cantidades de ese registro.</p>
+    <div style="font-weight:700;color:var(--green);margin-bottom:4px;font-size:14px">Registro diario</div>
     ${records.length===0?`<p class="empty">Sin registros aún.</p>`:
       records.map(r=>{
-        const { producido: prod, balance: bal } = computeMilkBalance(r);
+        const { am, pm } = totalProducidoByOrdeno(r);
         return `<div class="row">
           <div style="min-width:0">
             <div style="font-weight:600;font-size:14px">${fmtDate(r.date)}</div>
-            <div class="muted">Producido ${prod.toFixed(1)} L · Finca ${esc(r.farmConsumption)} L${r.hasCalves===false?'':' · Terneros '+esc(r.calfConsumption)+' L'} · Lechero ${esc(r.deliveredToMilkman)} L${r.note?' · '+esc(r.note):''}</div>
+            <div class="muted">Mañana ${am.toFixed(1)} L · Tarde ${pm.toFixed(1)} L · Finca ${esc(r.farmConsumption)} L${r.hasCalves===false?'':' · Terneros '+esc(r.calfConsumption)+' L'}${r.note?' · '+esc(r.note):''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-            <span class="mono ${bal<0?'warn':'ok'}" style="font-weight:700;font-size:13px">${bal>=0?'+':''}${bal.toFixed(1)} L</span>
             <button class="icon-btn" data-edit-milk="${esc(r.id)}">✎</button>
             <button class="icon-btn" data-del-milk="${esc(r.id)}">✕</button>
           </div>
@@ -617,26 +612,6 @@ function bindEvents(){
 
   const milkForm = document.getElementById("milk-form");
   if(milkForm){
-    const lecheroPreview = document.getElementById("lechero-preview");
-    const calcLechero = () => {
-      const fd = new FormData(milkForm);
-      const perCow = {};
-      state.cows.forEach(c=>{
-        perCow[c.id] = { am: parseFloat(fd.get("am_"+c.id))||0, pm: parseFloat(fd.get("pm_"+c.id))||0 };
-      });
-      const produced = totalProducido({ perCow });
-      const farm = parseFloat(fd.get("farmConsumption"))||0;
-      const calf = (calvesToggle && calvesToggle.checked) ? (parseFloat(fd.get("calfConsumption"))||0) : 0;
-      const lechero = computeDeliveredToMilkman(produced, farm, calf);
-      if(lecheroPreview){
-        lecheroPreview.textContent = lechero.toFixed(1) + " L";
-        lecheroPreview.style.color = lechero < 0 ? "var(--brick)" : "var(--ink)";
-      }
-      return lechero;
-    };
-    milkForm.addEventListener("input", calcLechero);
-    calcLechero();
-
     milkForm.addEventListener("submit",(ev)=>{
       ev.preventDefault();
       const fd = new FormData(milkForm);
