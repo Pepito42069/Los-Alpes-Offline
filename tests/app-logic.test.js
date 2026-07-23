@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   STORAGE_KEY, PIE_COLORS,
-  uid, fmtCOP, fmtDate, monthLabel, todayISO,
-  loadData, saveData,
+  uid, fmtCOP, fmtDate, monthLabel, todayISO, escapeHtml,
+  loadData, saveData, sanitizeAppData,
   computeMonthly, computeSummary,
   totalProducido, computeDeliveredToMilkman, computeMilkBalance, computeMilkChartMax, findDuplicateMilkRecord,
   computeReport, buildTransactionsCsv, buildBackupPayload, parseBackupData,
@@ -56,6 +56,20 @@ describe("todayISO", () => {
   });
 });
 
+describe("escapeHtml", () => {
+  it("escapes the five HTML-significant characters", () => {
+    expect(escapeHtml(`<img src=x onerror=alert(1)>&"'`))
+      .toBe("&lt;img src=x onerror=alert(1)&gt;&amp;&quot;&#39;");
+  });
+  it("treats null/undefined as an empty string", () => {
+    expect(escapeHtml(null)).toBe("");
+    expect(escapeHtml(undefined)).toBe("");
+  });
+  it("coerces numbers to strings without altering them", () => {
+    expect(escapeHtml(42)).toBe("42");
+  });
+});
+
 describe("uid", () => {
   it("generates short alphanumeric ids that differ between calls", () => {
     const a = uid();
@@ -67,6 +81,62 @@ describe("uid", () => {
 });
 
 // ---------- Storage ----------
+describe("sanitizeAppData", () => {
+  it("passes through well-shaped records unchanged", () => {
+    const data = {
+      transactions: [{ id: "1", type: "ingreso", category: "Venta de leche", amount: 1000, date: "2026-01-01", note: "" }],
+      inventory: [{ id: "2", name: "Sal", quantity: 5, unitValue: 100 }],
+      cows: [{ id: "3", name: "Lola" }],
+      milkRecords: [{ id: "4", date: "2026-01-01" }],
+    };
+    expect(sanitizeAppData(data)).toEqual(data);
+  });
+
+  it("drops transactions missing a valid date, type, or numeric amount", () => {
+    const data = {
+      transactions: [
+        { id: "ok", type: "ingreso", amount: 100, date: "2026-01-01" },
+        { id: "no-date", type: "ingreso", amount: 100 },
+        { id: "bad-type", type: "hack", amount: 100, date: "2026-01-01" },
+        { id: "bad-amount", type: "ingreso", amount: "100", date: "2026-01-01" },
+      ],
+    };
+    expect(sanitizeAppData(data).transactions).toEqual([
+      { id: "ok", type: "ingreso", amount: 100, date: "2026-01-01" },
+    ]);
+  });
+
+  it("drops inventory items missing a name or numeric quantity/unitValue", () => {
+    const data = {
+      inventory: [
+        { id: "ok", name: "Sal", quantity: 5, unitValue: 100 },
+        { id: "no-name", quantity: 5, unitValue: 100 },
+        { id: "bad-quantity", name: "Sal", quantity: "5", unitValue: 100 },
+      ],
+    };
+    expect(sanitizeAppData(data).inventory).toEqual([{ id: "ok", name: "Sal", quantity: 5, unitValue: 100 }]);
+  });
+
+  it("drops cows without a name and milk records without a date", () => {
+    const data = {
+      cows: [{ id: "ok", name: "Lola" }, { id: "no-name" }],
+      milkRecords: [{ id: "ok", date: "2026-01-01" }, { id: "no-date" }],
+    };
+    expect(sanitizeAppData(data).cows).toEqual([{ id: "ok", name: "Lola" }]);
+    expect(sanitizeAppData(data).milkRecords).toEqual([{ id: "ok", date: "2026-01-01" }]);
+  });
+
+  it("treats non-array or missing top-level fields as empty lists instead of throwing", () => {
+    expect(sanitizeAppData({})).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [] });
+    expect(sanitizeAppData({ transactions: "not-an-array" })).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [] });
+    expect(sanitizeAppData(null)).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [] });
+  });
+
+  it("rejects array entries (not plain records)", () => {
+    expect(sanitizeAppData({ cows: [["not", "a", "record"]] }).cows).toEqual([]);
+  });
+});
+
 describe("loadData / saveData", () => {
   it("returns an empty default shape when storage is empty", () => {
     const storage = makeFakeStorage();
@@ -77,6 +147,14 @@ describe("loadData / saveData", () => {
     const storage = makeFakeStorage();
     storage.setItem(STORAGE_KEY, "{not valid json");
     expect(loadData(storage)).toEqual({ transactions: [], inventory: [], cows: [], milkRecords: [] });
+  });
+
+  it("sanitizes malformed records instead of letting a later render crash", () => {
+    const storage = makeFakeStorage();
+    storage.setItem(STORAGE_KEY, JSON.stringify({
+      transactions: [{ id: "1", type: "ingreso", amount: 100, date: "2026-01-01" }, { id: "no-date" }],
+    }));
+    expect(loadData(storage).transactions).toEqual([{ id: "1", type: "ingreso", amount: 100, date: "2026-01-01" }]);
   });
 
   it("round-trips state through save then load", () => {
@@ -275,14 +353,31 @@ describe("buildTransactionsCsv", () => {
     ]);
     expect(csv).toContain('"flete ""urgente"""');
   });
+
+  it.each(["=cmd|'/c calc'!A1", "+1+1", "-1+1", "@SUM(A1)", "\ttabbed"])(
+    "neutralizes a note starting with a formula-injection trigger character (%s)",
+    (payload) => {
+      const csv = buildTransactionsCsv([
+        { date: "2026-01-01", type: "gasto", category: "Transporte", amount: 20, note: payload },
+      ]);
+      expect(csv).toContain(`"'${payload}"`);
+    }
+  );
+
+  it("does not alter a category/note that doesn't start with a trigger character", () => {
+    const csv = buildTransactionsCsv([
+      { date: "2026-01-01", type: "gasto", category: "Transporte", amount: 20, note: "cost=high" },
+    ]);
+    expect(csv).toContain('"cost=high"');
+  });
 });
 
 describe("buildBackupPayload / parseBackupData", () => {
   const state = {
-    transactions: [{ id: "1" }],
-    inventory: [{ id: "2" }],
-    cows: [{ id: "3" }],
-    milkRecords: [{ id: "4" }],
+    transactions: [{ id: "1", type: "ingreso", amount: 1000, date: "2026-01-01" }],
+    inventory: [{ id: "2", name: "Sal", quantity: 5, unitValue: 100 }],
+    cows: [{ id: "3", name: "Lola" }],
+    milkRecords: [{ id: "4", date: "2026-01-01" }],
   };
 
   it("serializes state plus an exportedAt timestamp", () => {
@@ -299,8 +394,15 @@ describe("buildBackupPayload / parseBackupData", () => {
   });
 
   it("defaults missing arrays to empty when importing a partial backup", () => {
-    const result = parseBackupData(JSON.stringify({ transactions: [{ id: "x" }] }));
-    expect(result).toEqual({ ok: true, data: { transactions: [{ id: "x" }], inventory: [], cows: [], milkRecords: [] } });
+    const result = parseBackupData(JSON.stringify({ transactions: state.transactions }));
+    expect(result).toEqual({ ok: true, data: { transactions: state.transactions, inventory: [], cows: [], milkRecords: [] } });
+  });
+
+  it("drops malformed records from an imported backup instead of crashing later", () => {
+    const result = parseBackupData(JSON.stringify({
+      transactions: [state.transactions[0], { id: "broken" }],
+    }));
+    expect(result.data.transactions).toEqual([state.transactions[0]]);
   });
 
   it("reports failure for invalid JSON", () => {

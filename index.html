@@ -12,6 +12,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
   :root{
+    color-scheme: light;
     --paper:#EFE6D0; --paper-dark:#E4D8B8; --card:#FBF6E9;
     --green:#24402A; --green-light:#3B5940;
     --ink:#3B2E20; --ink-faint:#7A6A52;
@@ -19,82 +20,142 @@
     --brick:#9A3324; --brick-light:#C9584A;
     --olive:#5C7A4B; --olive-light:#7E9C6C;
     --line:#C9BB94;
+    --shadow-sm: 0 1px 2px rgba(59,46,32,.06), 0 1px 1px rgba(59,46,32,.08);
+    --shadow-md: 0 4px 14px rgba(59,46,32,.10), 0 1px 3px rgba(59,46,32,.08);
+    --shadow-lift: 0 8px 22px rgba(59,46,32,.14), 0 2px 6px rgba(59,46,32,.10);
+    --ease: cubic-bezier(.2,.7,.3,1);
   }
   *{box-sizing:border-box;}
+  html{ -webkit-tap-highlight-color: transparent; }
   body{
-    margin:0; background:var(--paper-dark); color:var(--ink);
+    margin:0; color:var(--ink);
+    background:
+      radial-gradient(1200px 500px at 15% -10%, #ffffff33, transparent 60%),
+      radial-gradient(900px 400px at 100% 0%, #ffffff22, transparent 55%),
+      var(--paper-dark);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     -webkit-font-smoothing:antialiased;
   }
+  ::selection{ background:var(--ochre-light); color:var(--ink); }
   .serif{ font-family:Georgia,"Times New Roman",serif; }
   .mono{ font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace; }
-  header{ background:var(--green); padding:18px 16px 0; }
-  header h1{ margin:0; color:var(--paper); font-size:20px; display:flex; align-items:center; gap:8px; }
-  header p{ margin:2px 0 10px; color:var(--olive-light); font-size:12px; }
-  nav{ display:flex; gap:4px; background:var(--green); padding:0 8px; }
-  nav button{
-    flex:1; border:none; background:var(--paper-dark); color:var(--ink-faint);
-    font-size:12px; font-weight:600; padding:10px 4px; border-radius:10px 10px 0 0;
-    border-top:2px solid transparent; cursor:pointer;
+  header{
+    background:linear-gradient(155deg, var(--green) 0%, var(--green-light) 100%);
+    padding:20px 16px 0; position:relative; z-index:1;
+    box-shadow: 0 2px 10px rgba(0,0,0,.15);
   }
-  nav button.active{ background:var(--card); color:var(--green); border-top-color:var(--ochre); }
-  main{ max-width:640px; margin:0 auto; padding:16px; }
-  .card{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:14px; }
+  header h1{ margin:0; color:var(--paper); font-size:21px; font-weight:800; letter-spacing:.2px; display:flex; align-items:center; gap:8px; }
+  header p{ margin:3px 0 12px; color:var(--olive-light); font-size:12px; letter-spacing:.1px; }
+  nav{ display:flex; gap:4px; background:var(--green); padding:0 8px; position:relative; z-index:1; }
+  nav button{
+    flex:1; border:none; background:transparent; color:var(--paper);
+    opacity:.62; font-size:12px; font-weight:600; padding:11px 4px; border-radius:10px 10px 0 0;
+    border-top:2px solid transparent; cursor:pointer;
+    transition: background-color .18s var(--ease), opacity .18s var(--ease), color .18s var(--ease);
+  }
+  nav button:hover{ opacity:.85; }
+  nav button.active{
+    background:var(--card); color:var(--green); border-top-color:var(--ochre);
+    opacity:1; box-shadow: 0 -2px 8px rgba(0,0,0,.08);
+  }
+  main{ max-width:640px; margin:0 auto; padding:18px 16px 40px; }
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:16px; margin-bottom:14px; box-shadow: var(--shadow-sm);
+    animation: rise .28s var(--ease);
+  }
+  .card-alert{
+    border-color:var(--brick-light);
+    background: linear-gradient(180deg, #FBF6E9 0%, #FBF6E9 60%, #F7E6DE 150%);
+    box-shadow: var(--shadow-sm), inset 3px 0 0 var(--brick-light);
+  }
+  @keyframes rise{ from{ opacity:0; transform:translateY(4px); } to{ opacity:1; transform:translateY(0); } }
+  @media (prefers-reduced-motion: reduce){
+    .card{ animation:none; }
+    *{ scroll-behavior:auto !important; }
+  }
   .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-  .stat-label{ font-size:11px; font-weight:600; color:var(--ink-faint); }
-  .stat-value{ font-size:19px; font-weight:700; margin-top:4px; }
-  .row{ display:flex; justify-content:space-between; align-items:center; gap:8px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .stat-label{ font-size:11px; font-weight:700; color:var(--ink-faint); letter-spacing:.2px; text-transform:uppercase; }
+  .stat-value{ font-size:20px; font-weight:800; margin-top:5px; letter-spacing:-.2px; }
+  .row{ display:flex; justify-content:space-between; align-items:center; gap:8px; padding:11px 0; border-bottom:1px solid var(--line); transition:background-color .15s var(--ease); }
   .row:last-child{ border-bottom:none; }
+  .row:hover{ background: linear-gradient(90deg, transparent, #0000, transparent), rgba(59,46,32,.03); margin:0 -8px; padding-left:8px; padding-right:8px; border-radius:8px; }
   .muted{ color:var(--ink-faint); font-size:12px; }
   .btn{
     display:inline-flex; align-items:center; gap:6px; border:none; border-radius:999px;
-    padding:9px 16px; font-size:13px; font-weight:700; cursor:pointer;
+    padding:10px 18px; font-size:13px; font-weight:700; cursor:pointer;
+    box-shadow: var(--shadow-sm);
+    transition: transform .12s var(--ease), box-shadow .18s var(--ease), filter .15s var(--ease);
   }
   .btn-green{ background:var(--green); color:var(--paper); }
-  .btn-ochre{ background:var(--ochre); color:var(--ink); }
-  .btn-ghost{ background:transparent; color:var(--ink-faint); }
-  .btn:active{ transform:scale(.96); }
+  .btn-ochre{ background:var(--ochre); color:#2b1b04; }
+  .btn-ghost{ background:transparent; color:var(--ink-faint); box-shadow:none; }
+  .btn:hover{ filter:brightness(1.07); box-shadow: var(--shadow-md); }
+  .btn-ghost:hover{ filter:none; background:rgba(59,46,32,.06); box-shadow:none; }
+  .btn:active{ transform:scale(.96); box-shadow: var(--shadow-sm); }
+  .btn:focus-visible, .icon-btn:focus-visible, nav button:focus-visible, .filters button:focus-visible, .toggle-type button:focus-visible{
+    outline: 2px solid var(--ochre); outline-offset: 2px;
+  }
   label{ font-size:12px; font-weight:600; color:var(--ink-faint); display:block; margin-bottom:3px; }
   input, select{
-    width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px;
-    font-size:14px; background:#fff8; color:var(--ink);
+    width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px;
+    font-size:14px; background:#fffb; color:var(--ink);
+    transition: border-color .15s var(--ease), box-shadow .15s var(--ease), background-color .15s var(--ease);
   }
+  input:hover, select:hover{ border-color:var(--ink-faint); }
+  input:focus, select:focus{
+    outline:none; border-color:var(--ochre); background:#fff;
+    box-shadow: 0 0 0 3px rgba(184,121,31,.18);
+  }
+  input[type="checkbox"]{ accent-color: var(--olive); }
   .field{ margin-bottom:10px; }
   .fields2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   .fields3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
   .toggle-type{ display:flex; gap:8px; margin-bottom:10px; }
   .toggle-type button{
-    flex:1; padding:9px; border-radius:8px; font-weight:700; font-size:13px; cursor:pointer;
+    flex:1; padding:10px; border-radius:10px; font-weight:700; font-size:13px; cursor:pointer;
     border:1px solid var(--line); background:transparent; color:var(--ink); text-transform:capitalize;
+    transition: background-color .16s var(--ease), color .16s var(--ease), border-color .16s var(--ease), box-shadow .16s var(--ease);
   }
-  .toggle-type button.on-ingreso{ background:var(--olive); color:var(--paper); border-color:var(--olive); }
-  .toggle-type button.on-gasto{ background:var(--brick); color:var(--paper); border-color:var(--brick); }
+  .toggle-type button:hover{ border-color:var(--ink-faint); }
+  .toggle-type button.on-ingreso{ background:var(--olive); color:var(--paper); border-color:var(--olive); box-shadow:var(--shadow-sm); }
+  .toggle-type button.on-gasto{ background:var(--brick); color:var(--paper); border-color:var(--brick); box-shadow:var(--shadow-sm); }
   .filters{ display:flex; gap:6px; margin-bottom:10px; }
   .filters button{
-    padding:5px 12px; border-radius:999px; font-size:11px; font-weight:700; cursor:pointer;
+    padding:6px 13px; border-radius:999px; font-size:11px; font-weight:700; cursor:pointer;
     border:1px solid var(--green); background:transparent; color:var(--ink-faint); text-transform:capitalize;
+    transition: background-color .16s var(--ease), color .16s var(--ease);
   }
+  .filters button:hover{ background:rgba(36,64,42,.08); }
   .filters button.active{ background:var(--green); color:var(--paper); }
-  .icon-btn{ background:none; border:none; cursor:pointer; padding:4px; font-size:14px; }
+  .icon-btn{
+    background:none; border:none; cursor:pointer; padding:7px; font-size:14px;
+    border-radius:999px; line-height:1; transition: background-color .15s var(--ease), transform .12s var(--ease);
+  }
+  .icon-btn:hover{ background:rgba(59,46,32,.08); }
+  .icon-btn:active{ transform:scale(.9); }
   .warn{ color:var(--brick); }
   .ok{ color:var(--olive); }
-  .empty{ text-align:center; color:var(--ink-faint); font-size:13px; padding:24px 0; }
+  .empty{ text-align:center; color:var(--ink-faint); font-size:13px; padding:30px 0; }
+  .empty::before{ content:"🗒️"; display:block; font-size:26px; margin-bottom:8px; opacity:.55; }
   .bars{ display:flex; align-items:flex-end; gap:10px; height:150px; padding-top:8px; }
   .bar-group{ flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; }
   .bar-pair{ display:flex; align-items:flex-end; gap:3px; height:120px; }
-  .bar{ width:12px; border-radius:3px 3px 0 0; }
+  .bar{ width:12px; border-radius:4px 4px 1px 1px; transition: height .5s var(--ease); box-shadow: inset 0 -2px 3px rgba(0,0,0,.08); }
   .pie-wrap{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
-  .pie{ width:120px; height:120px; border-radius:50%; flex-shrink:0; }
+  .pie{ width:120px; height:120px; border-radius:50%; flex-shrink:0; box-shadow: var(--shadow-md), inset 0 0 0 6px var(--card); }
   .legend-item{ display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; }
-  .dot{ width:9px; height:9px; border-radius:50%; display:inline-block; }
+  .dot{ width:9px; height:9px; border-radius:50%; display:inline-block; box-shadow: 0 0 0 2px #0000, 0 1px 1px rgba(0,0,0,.15); }
   .backup-row{ display:flex; gap:8px; flex-wrap:wrap; }
   table{ width:100%; border-collapse:collapse; font-size:13px; }
-  th{ text-align:left; font-size:11px; color:var(--ink-faint); padding-bottom:4px; border-bottom:1px solid var(--line); }
-  td{ padding:5px 0; border-bottom:1px solid var(--line); }
+  th{ text-align:left; font-size:11px; font-weight:700; letter-spacing:.2px; text-transform:uppercase; color:var(--ink-faint); padding-bottom:6px; border-bottom:1px solid var(--line); }
+  td{ padding:7px 0; border-bottom:1px solid var(--line); }
+  tbody tr{ transition: background-color .15s var(--ease); }
+  tbody tr:hover{ background:rgba(59,46,32,.035); }
   @media print{
     header, nav, .no-print{ display:none !important; }
     body{ background:#fff; }
-    .card{ border:none; box-shadow:none; }
+    .card{ border:none; box-shadow:none; animation:none; }
   }
 </style>
 </head>
@@ -109,7 +170,7 @@
 <script type="module">
 import {
   INCOME_CATS, EXPENSE_CATS, INV_CATS,
-  uid, fmtCOP, fmtDate, monthLabel, todayISO,
+  uid, fmtCOP, fmtDate, monthLabel, todayISO, escapeHtml as esc,
   loadData, saveData,
   computeSummary, totalProducido, computeDeliveredToMilkman, computeMilkBalance, computeMilkChartMax,
   findDuplicateMilkRecord, computeReport, buildTransactionsCsv, buildBackupPayload,
@@ -183,9 +244,9 @@ function viewResumen(){
   }
 
   if(lowStock.length>0){
-    html += `<div class="card" style="border-color:var(--brick-light)">
+    html += `<div class="card card-alert">
       <div style="font-weight:700;color:var(--brick);margin-bottom:6px;font-size:14px">⚠️ Inventario bajo</div>
-      ${lowStock.map(i=>`<div class="row"><span>${i.name}</span><span class="mono">${i.quantity} ${i.unit}</span></div>`).join("")}
+      ${lowStock.map(i=>`<div class="row"><span>${esc(i.name)}</span><span class="mono">${esc(i.quantity)} ${esc(i.unit)}</span></div>`).join("")}
     </div>`;
   }
 
@@ -216,15 +277,15 @@ function viewCuentas(){
           <select name="category">${cats.map(c=>`<option ${e&&e.category===c?'selected':''}>${c}</option>`).join("")}</select>
         </div>
         <div class="field"><label>Monto (COP)</label>
-          <input class="mono" type="number" min="0" step="1000" name="amount" value="${e?e.amount:''}" placeholder="0" required>
+          <input class="mono" type="number" min="0" step="1000" name="amount" value="${e?esc(e.amount):''}" placeholder="0" required>
         </div>
       </div>
       <div class="fields2">
         <div class="field"><label>Fecha</label>
-          <input type="date" name="date" value="${e?e.date:todayISO()}" required>
+          <input type="date" name="date" value="${e?esc(e.date):todayISO()}" required>
         </div>
         <div class="field"><label>Nota (opcional)</label>
-          <input type="text" name="note" value="${e?(e.note||''):''}" placeholder="Detalle">
+          <input type="text" name="note" value="${e?esc(e.note||''):''}" placeholder="Detalle">
         </div>
       </div>
       <div style="display:flex;justify-content:flex-end;gap:8px">
@@ -232,7 +293,7 @@ function viewCuentas(){
         <button type="submit" class="btn ${e?'btn-ochre':'btn-green'}">${e?'Guardar cambios':'➕ Registrar'}</button>
       </div>
       <input type="hidden" name="type" value="${type}">
-      <input type="hidden" name="id" value="${e?e.id:''}">
+      <input type="hidden" name="id" value="${e?esc(e.id):''}">
     </form>
   </div>
   <div class="filters no-print">
@@ -243,13 +304,13 @@ function viewCuentas(){
       list.map(t=>`
       <div class="row">
         <div style="min-width:0">
-          <div style="font-weight:600;font-size:14px">${t.category}</div>
-          <div class="muted">${fmtDate(t.date)}${t.note?' · '+t.note:''}</div>
+          <div style="font-weight:600;font-size:14px">${esc(t.category)}</div>
+          <div class="muted">${fmtDate(t.date)}${t.note?' · '+esc(t.note):''}</div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
           <span class="mono ${t.type==='ingreso'?'ok':'warn'}" style="font-weight:700;font-size:13px">${t.type==='ingreso'?'+':'−'}${fmtCOP(t.amount)}</span>
-          <button class="icon-btn" data-edit-tx="${t.id}">✎</button>
-          <button class="icon-btn" data-del-tx="${t.id}">✕</button>
+          <button class="icon-btn" data-edit-tx="${esc(t.id)}">✎</button>
+          <button class="icon-btn" data-del-tx="${esc(t.id)}">✕</button>
         </div>
       </div>`).join("")}
   </div>`;
@@ -264,25 +325,25 @@ function viewInventario(){
     <form id="inv-form">
       <div class="fields2">
         <div class="field"><label>Nombre del ítem</label>
-          <input type="text" name="name" value="${e?e.name:''}" placeholder="Ej. Concentrado 18% proteína" required></div>
+          <input type="text" name="name" value="${e?esc(e.name):''}" placeholder="Ej. Concentrado 18% proteína" required></div>
         <div class="field"><label>Categoría</label>
           <select name="category">${INV_CATS.map(c=>`<option ${e&&e.category===c?'selected':''}>${c}</option>`).join("")}</select></div>
       </div>
       <div class="fields3">
         <div class="field"><label>Cantidad</label>
-          <input class="mono" type="number" step="0.01" name="quantity" value="${e?e.quantity:''}" required></div>
+          <input class="mono" type="number" step="0.01" name="quantity" value="${e?esc(e.quantity):''}" required></div>
         <div class="field"><label>Unidad</label>
-          <input type="text" name="unit" value="${e?e.unit:'kg'}" placeholder="kg, litros, cabezas..."></div>
+          <input type="text" name="unit" value="${e?esc(e.unit):'kg'}" placeholder="kg, litros, cabezas..."></div>
         <div class="field"><label>Valor unitario</label>
-          <input class="mono" type="number" step="100" name="unitValue" value="${e?e.unitValue:''}" required></div>
+          <input class="mono" type="number" step="100" name="unitValue" value="${e?esc(e.unitValue):''}" required></div>
       </div>
       <div class="field"><label>Alertar si la cantidad es menor o igual a (opcional)</label>
-        <input class="mono" type="number" step="0.01" name="minStock" value="${e&&e.minStock!=null?e.minStock:''}" style="max-width:140px" placeholder="—"></div>
+        <input class="mono" type="number" step="0.01" name="minStock" value="${e&&e.minStock!=null?esc(e.minStock):''}" style="max-width:140px" placeholder="—"></div>
       <div style="display:flex;justify-content:flex-end;gap:8px">
         ${e?`<button type="button" class="btn btn-ghost" id="inv-cancel">Cancelar</button>`:""}
         <button type="submit" class="btn ${e?'btn-ochre':'btn-green'}">${e?'Guardar cambios':'➕ Agregar'}</button>
       </div>
-      <input type="hidden" name="id" value="${e?e.id:''}">
+      <input type="hidden" name="id" value="${e?esc(e.id):''}">
     </form>
   </div>
   <div class="card">
@@ -291,16 +352,16 @@ function viewInventario(){
         const low = i.minStock!=null && i.quantity<=i.minStock;
         return `<div class="row">
           <div style="min-width:0">
-            <div style="font-weight:600;font-size:14px">${low?'⚠️ ':''}${i.name}</div>
-            <div class="muted">${i.category} · ${fmtDate(i.lastUpdated)}</div>
+            <div style="font-weight:600;font-size:14px">${low?'⚠️ ':''}${esc(i.name)}</div>
+            <div class="muted">${esc(i.category)} · ${fmtDate(i.lastUpdated)}</div>
           </div>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
             <div style="text-align:right">
-              <div class="mono ${low?'warn':''}" style="font-weight:700;font-size:13px">${i.quantity} ${i.unit}</div>
+              <div class="mono ${low?'warn':''}" style="font-weight:700;font-size:13px">${esc(i.quantity)} ${esc(i.unit)}</div>
               <div class="mono muted">${fmtCOP(i.quantity*i.unitValue)}</div>
             </div>
-            <button class="icon-btn" data-edit-inv="${i.id}">✎</button>
-            <button class="icon-btn" data-del-inv="${i.id}">✕</button>
+            <button class="icon-btn" data-edit-inv="${esc(i.id)}">✎</button>
+            <button class="icon-btn" data-del-inv="${esc(i.id)}">✕</button>
           </div>
         </div>`;
       }).join("")}
@@ -328,9 +389,9 @@ function viewProduccion(){
           const am = pcv && typeof pcv === "object" ? pcv.am : (pcv!=null?pcv:'');
           const pm = pcv && typeof pcv === "object" ? pcv.pm : '';
           return `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;align-items:end;margin-bottom:6px">
-            <label style="align-self:center;margin-bottom:0">${c.name}</label>
-            <input class="mono" type="number" step="0.1" min="0" name="am_${c.id}" value="${am!==''?am:''}" placeholder="L">
-            <input class="mono" type="number" step="0.1" min="0" name="pm_${c.id}" value="${pm!==''?pm:''}" placeholder="L">
+            <label style="align-self:center;margin-bottom:0">${esc(c.name)}</label>
+            <input class="mono" type="number" step="0.1" min="0" name="am_${esc(c.id)}" value="${am!==''?esc(am):''}" placeholder="L">
+            <input class="mono" type="number" step="0.1" min="0" name="pm_${esc(c.id)}" value="${pm!==''?esc(pm):''}" placeholder="L">
           </div>`;
         }).join("")}
       </div>`;
@@ -348,7 +409,7 @@ function viewProduccion(){
     </form>
     ${cows.length>0 ? `<div style="display:flex;flex-wrap:wrap;gap:6px">
       ${cows.map(c=>`<span style="display:inline-flex;align-items:center;gap:5px;background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12px">
-        ${c.name} <button class="icon-btn" style="padding:0" data-del-cow="${c.id}">✕</button>
+        ${esc(c.name)} <button class="icon-btn" style="padding:0" data-del-cow="${esc(c.id)}">✕</button>
       </span>`).join("")}
     </div>` : ""}
   </div>
@@ -357,11 +418,11 @@ function viewProduccion(){
     <div style="font-weight:700;color:var(--green);margin-bottom:8px;font-size:14px">Registro diario · 2 ordeños</div>
     <form id="milk-form">
       <div class="field"><label>Fecha</label>
-        <input type="date" name="date" value="${em?em.date:todayISO()}" required></div>
+        <input type="date" name="date" value="${em?esc(em.date):todayISO()}" required></div>
       ${cowsBlock}
       <div class="fields2">
         <div class="field"><label>Consumo en la finca (L)</label>
-          <input class="mono" type="number" step="0.1" min="0" name="farmConsumption" value="${em?em.farmConsumption:''}" placeholder="0"></div>
+          <input class="mono" type="number" step="0.1" min="0" name="farmConsumption" value="${em?esc(em.farmConsumption):''}" placeholder="0"></div>
         <div class="field"><label>Se lleva el lechero (L)</label>
           <div id="lechero-preview" class="mono" style="padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--paper);font-weight:700">0.0 L</div>
           <div class="muted" style="margin-top:2px">Se calcula solo: producido − finca − terneros</div>
@@ -372,14 +433,14 @@ function viewProduccion(){
         <span style="font-weight:600;color:var(--ink-faint)">Hay terneros lactando en este período</span>
       </label>
       ${hasCalves?`<div class="field"><label>Consumo terneros (L)</label>
-        <input class="mono" type="number" step="0.1" min="0" name="calfConsumption" value="${em?em.calfConsumption:''}" placeholder="0"></div>`:""}
+        <input class="mono" type="number" step="0.1" min="0" name="calfConsumption" value="${em?esc(em.calfConsumption):''}" placeholder="0"></div>`:""}
       <div class="field"><label>Nota (opcional)</label>
-        <input type="text" name="note" value="${em?(em.note||''):''}" placeholder="Detalle"></div>
+        <input type="text" name="note" value="${em?esc(em.note||''):''}" placeholder="Detalle"></div>
       <div style="display:flex;justify-content:flex-end;gap:8px">
         ${em?`<button type="button" class="btn btn-ghost" id="milk-cancel">Cancelar</button>`:""}
         <button type="submit" class="btn ${em?'btn-ochre':'btn-green'}">${em?'Guardar cambios':'➕ Registrar día'}</button>
       </div>
-      <input type="hidden" name="id" value="${em?em.id:''}">
+      <input type="hidden" name="id" value="${em?esc(em.id):''}">
     </form>
   </div>
 
@@ -410,12 +471,12 @@ function viewProduccion(){
         return `<div class="row">
           <div style="min-width:0">
             <div style="font-weight:600;font-size:14px">${fmtDate(r.date)}</div>
-            <div class="muted">Producido ${prod.toFixed(1)} L · Finca ${r.farmConsumption} L${r.hasCalves===false?'':' · Terneros '+r.calfConsumption+' L'} · Lechero ${r.deliveredToMilkman} L${r.note?' · '+r.note:''}</div>
+            <div class="muted">Producido ${prod.toFixed(1)} L · Finca ${esc(r.farmConsumption)} L${r.hasCalves===false?'':' · Terneros '+esc(r.calfConsumption)+' L'} · Lechero ${esc(r.deliveredToMilkman)} L${r.note?' · '+esc(r.note):''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
             <span class="mono ${bal<0?'warn':'ok'}" style="font-weight:700;font-size:13px">${bal>=0?'+':''}${bal.toFixed(1)} L</span>
-            <button class="icon-btn" data-edit-milk="${r.id}">✎</button>
-            <button class="icon-btn" data-del-milk="${r.id}">✕</button>
+            <button class="icon-btn" data-edit-milk="${esc(r.id)}">✎</button>
+            <button class="icon-btn" data-del-milk="${esc(r.id)}">✕</button>
           </div>
         </div>`;
       }).join("")}
@@ -429,8 +490,8 @@ function viewReportes(){
   return `
   <div class="card no-print">
     <div class="fields2">
-      <div class="field"><label>Desde</label><input type="date" id="rep-from" value="${state.repFrom}"></div>
-      <div class="field"><label>Hasta</label><input type="date" id="rep-to" value="${state.repTo}"></div>
+      <div class="field"><label>Desde</label><input type="date" id="rep-from" value="${esc(state.repFrom)}"></div>
+      <div class="field"><label>Hasta</label><input type="date" id="rep-to" value="${esc(state.repTo)}"></div>
     </div>
     <div class="backup-row" style="margin-bottom:10px">
       <button class="btn btn-ochre" id="export-csv">⬇ CSV (Excel)</button>
@@ -456,13 +517,13 @@ function viewReportes(){
     ${catList.length>0?`
     <div class="pie-wrap" style="margin-bottom:10px">
       <div class="pie" style="background:conic-gradient(${gradient})"></div>
-      <div>${catList.map(c=>`<div class="legend-item"><span class="dot" style="background:${c.color}"></span>${c.name} — ${fmtCOP(c.value)}</div>`).join("")}</div>
+      <div>${catList.map(c=>`<div class="legend-item"><span class="dot" style="background:${c.color}"></span>${esc(c.name)} — ${fmtCOP(c.value)}</div>`).join("")}</div>
     </div>`:""}
     <table>
       <thead><tr><th>Fecha</th><th>Categoría</th><th style="text-align:right">Monto</th></tr></thead>
       <tbody>
         ${filtered.length===0? `<tr><td colspan="3" class="empty">Sin movimientos en este rango.</td></tr>` :
-          filtered.map(t=>`<tr><td>${fmtDate(t.date)}</td><td>${t.category}</td><td class="mono" style="text-align:right" class="${t.type==='ingreso'?'ok':'warn'}">${t.type==='ingreso'?'+':'−'}${fmtCOP(t.amount)}</td></tr>`).join("")}
+          filtered.map(t=>`<tr><td>${fmtDate(t.date)}</td><td>${esc(t.category)}</td><td class="mono ${t.type==='ingreso'?'ok':'warn'}" style="text-align:right">${t.type==='ingreso'?'+':'−'}${fmtCOP(t.amount)}</td></tr>`).join("")}
       </tbody>
     </table>
   </div>`;
@@ -490,9 +551,6 @@ function bindEvents(){
     });
     const cancel = document.getElementById("tx-cancel");
     if(cancel) cancel.addEventListener("click", ()=>{ state.editingTx=null; window._txType=null; render(); });
-    txForm.querySelectorAll("[data-edit-tx]").forEach(b=>b.addEventListener("click",()=>{
-      state.editingTx = state.transactions.find(t=>t.id===b.dataset.editTx); render();
-    }));
   }
   document.querySelectorAll("[data-edit-tx]").forEach(b=>b.addEventListener("click",()=>{
     state.editingTx = state.transactions.find(t=>t.id===b.dataset.editTx); render();

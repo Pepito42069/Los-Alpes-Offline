@@ -14,11 +14,44 @@ export const fmtDate = (iso) => { if(!iso) return ""; const d=new Date(iso+"T00:
 export const monthLabel = (iso) => { const d=new Date(iso+"T00:00:00"); return d.toLocaleDateString("es-CO",{month:"short",year:"2-digit"}); };
 export const todayISO = () => new Date().toISOString().slice(0,10);
 
+// Every string rendered into innerHTML (record fields, imported backups)
+// must go through this: the app builds its UI with template strings, so an
+// unescaped value is a stored-XSS vector — most reachable via a crafted
+// "respaldo" JSON file shared with the farm owner and imported.
+const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+export const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
+
 // ---------- Storage ----------
+const isPlainRecord = (x) => !!x && typeof x === "object" && !Array.isArray(x);
+
+// Guards against malformed/malicious data (corrupted localStorage, a hand-edited
+// or crafted backup file) crashing the app later — e.g. computeMonthly does
+// t.date.slice(...), which throws if date is missing, taking the whole render down.
+export function sanitizeAppData(data){
+  const transactions = Array.isArray(data?.transactions) ? data.transactions : [];
+  const inventory = Array.isArray(data?.inventory) ? data.inventory : [];
+  const cows = Array.isArray(data?.cows) ? data.cows : [];
+  const milkRecords = Array.isArray(data?.milkRecords) ? data.milkRecords : [];
+  return {
+    transactions: transactions.filter(t =>
+      isPlainRecord(t) && typeof t.date === "string" &&
+      (t.type === "ingreso" || t.type === "gasto") &&
+      typeof t.amount === "number" && isFinite(t.amount)
+    ),
+    inventory: inventory.filter(i =>
+      isPlainRecord(i) && typeof i.name === "string" &&
+      typeof i.quantity === "number" && isFinite(i.quantity) &&
+      typeof i.unitValue === "number" && isFinite(i.unitValue)
+    ),
+    cows: cows.filter(c => isPlainRecord(c) && typeof c.name === "string"),
+    milkRecords: milkRecords.filter(r => isPlainRecord(r) && typeof r.date === "string"),
+  };
+}
+
 export function loadData(storage){
   try{
     const raw = storage.getItem(STORAGE_KEY);
-    if(raw) return JSON.parse(raw);
+    if(raw) return sanitizeAppData(JSON.parse(raw));
   }catch(e){ console.error(e); }
   return { transactions: [], inventory: [], cows: [], milkRecords: [] };
 }
@@ -100,9 +133,23 @@ export function computeReport(transactions, from, to){
   return { filtered, ingresos, gastos, catList, gradient };
 }
 
+// Spreadsheet apps can interpret a cell starting with =, +, -, @, or a tab/CR
+// as a formula (CSV/"formula injection"). A free-text note or a category
+// carried over from an imported backup could start with one of these, so
+// neutralize it before it reaches Excel/Sheets.
+const CSV_FORMULA_PREFIX = /^[=+\-@\t\r]/;
+const sanitizeCsvField = (value) => {
+  const str = String(value ?? "");
+  return CSV_FORMULA_PREFIX.test(str) ? "'" + str : str;
+};
+
 export function buildTransactionsCsv(transactions){
   let csv = "Fecha,Tipo,Categoria,Monto,Nota\n";
-  transactions.forEach(t=>{ csv += `${t.date},${t.type},"${t.category}",${t.amount},"${(t.note||'').replace(/"/g,'""')}"\n`; });
+  transactions.forEach(t=>{
+    const category = sanitizeCsvField(t.category).replace(/"/g,'""');
+    const note = sanitizeCsvField(t.note||"").replace(/"/g,'""');
+    csv += `${t.date},${t.type},"${category}",${t.amount},"${note}"\n`;
+  });
   return csv;
 }
 
@@ -116,15 +163,7 @@ export function buildBackupPayload(state, exportedAt = new Date().toISOString())
 export function parseBackupData(jsonString){
   try{
     const parsed = JSON.parse(jsonString);
-    return {
-      ok: true,
-      data: {
-        transactions: parsed.transactions || [],
-        inventory: parsed.inventory || [],
-        cows: parsed.cows || [],
-        milkRecords: parsed.milkRecords || [],
-      },
-    };
+    return { ok: true, data: sanitizeAppData(parsed) };
   }catch(e){
     return { ok:false };
   }
