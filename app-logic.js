@@ -20,6 +20,18 @@ export const isProductionCow = (cow) => cowEstado(cow) === "En producción";
 
 export const uid = () => Math.random().toString(36).slice(2,10);
 export const fmtCOP = (n) => new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(n||0);
+// Short form for labels drawn directly on chart bars, where a full "$1.234.567"
+// would overflow a 12px-wide bar's column (e.g. "$1,2M", "$45k", "$900").
+export function fmtCompactCOP(n){
+  const v = n || 0;
+  const sign = v < 0 ? "-" : "";
+  const abs = Math.abs(v);
+  let body;
+  if(abs >= 1000000) body = (abs/1000000).toFixed(abs>=10000000?0:1).replace(/\.0$/,"") + "M";
+  else if(abs >= 1000) body = (abs/1000).toFixed(abs>=10000?0:1).replace(/\.0$/,"") + "k";
+  else body = Math.round(abs).toString();
+  return sign + "$" + body;
+}
 export const fmtDate = (iso) => { if(!iso) return ""; const d=new Date(iso+"T00:00:00"); return d.toLocaleDateString("es-CO",{day:"2-digit",month:"short",year:"numeric"}); };
 export const monthLabel = (iso) => { const d=new Date(iso+"T00:00:00"); return d.toLocaleDateString("es-CO",{month:"short",year:"2-digit"}); };
 export const todayISO = () => new Date().toISOString().slice(0,10);
@@ -156,6 +168,46 @@ export function computeReport(transactions, from, to){
   const gradient = catList.map(c=>{ const start=acc/total*360; acc+=c.value; const end=acc/total*360; return `${c.color} ${start}deg ${end}deg`; }).join(", ");
 
   return { filtered, ingresos, gastos, catList, gradient };
+}
+
+// Monday (local calendar day) of the week containing dateStr, as an ISO
+// "YYYY-MM-DD" string — used to group chart points by week without pulling
+// in a date library or risking UTC/local day-shift bugs from toISOString().
+function weekStartISO(dateStr){
+  const d = new Date(dateStr+"T00:00:00");
+  const day = d.getDay();
+  d.setDate(d.getDate() - (day===0 ? 6 : day-1));
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+
+// Groups milk records in [from, to] into produced / consumed (casa + terneros,
+// respecting hasCalves) / sold (deliveredToMilkman) liters, one point per day
+// for ranges up to a month, or per week for longer ranges so the chart
+// doesn't end up with one bar-group per day across a whole year.
+export function computeProductionChartData(milkRecords, from, to){
+  const inRange = milkRecords.filter(r => r.date >= from && r.date <= to);
+  const spanDays = Math.round((new Date(to+"T00:00:00") - new Date(from+"T00:00:00")) / 86400000) + 1;
+  const byWeek = spanDays > 31;
+
+  const map = {};
+  inRange.forEach(r => {
+    const key = byWeek ? weekStartISO(r.date) : r.date;
+    if(!map[key]) map[key] = { key, produced: 0, consumed: 0, sold: 0 };
+    const { am, pm } = totalProducidoByOrdeno(r);
+    const consumo = (r.farmConsumption||0) + (r.hasCalves===false ? 0 : (r.calfConsumption||0));
+    map[key].produced += am + pm;
+    map[key].consumed += consumo;
+    map[key].sold += r.deliveredToMilkman || 0;
+  });
+
+  const points = Object.values(map).sort((a,b) => a.key.localeCompare(b.key));
+  points.forEach(p => { p.label = (byWeek ? "Sem. " : "") + fmtDate(p.key).slice(0,6); });
+
+  return { points, byWeek };
+}
+
+export function computeProductionChartMax(points){
+  return Math.max(1, ...points.flatMap(p => [p.produced, p.consumed, p.sold]));
 }
 
 const cowLitersFromEntry = (v) =>
