@@ -31,13 +31,25 @@ function makeGetValue(fields){
 
 // ---------- Formatters ----------
 describe("fmtCOP", () => {
-  it("formats a positive amount as COP currency with no decimals", () => {
-    expect(fmtCOP(1500000)).toBe("$ 1.500.000");
+  it("formats a positive amount under a million as COP currency with no decimals", () => {
+    expect(fmtCOP(450000)).toBe(new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(450000));
   });
   it("treats undefined/null/0 as zero", () => {
-    expect(fmtCOP(undefined)).toBe("$ 0");
-    expect(fmtCOP(null)).toBe("$ 0");
-    expect(fmtCOP(0)).toBe("$ 0");
+    expect(fmtCOP(undefined)).toBe(fmtCOP(0));
+    expect(fmtCOP(null)).toBe(fmtCOP(0));
+  });
+  it('abbreviates a million or more as "X,XM" instead of the full digit form', () => {
+    expect(fmtCOP(1000000)).toMatch(/^\$\s?1M$/);
+    expect(fmtCOP(1500000)).toMatch(/^\$\s?1,5M$/);
+    expect(fmtCOP(2340000)).toMatch(/^\$\s?2,3M$/);
+    expect(fmtCOP(15000000)).toMatch(/^\$\s?15M$/);
+  });
+  it("keeps amounts just under a million in full digit form", () => {
+    expect(fmtCOP(999999)).toMatch(/999\.999/);
+    expect(fmtCOP(999999)).not.toContain("M");
+  });
+  it("preserves the sign for negative millions", () => {
+    expect(fmtCOP(-1500000)).toMatch(/^-\$\s?1,5M$/);
   });
 });
 
@@ -343,11 +355,15 @@ describe("fmtCompactCOP", () => {
   });
   it("abbreviates thousands with k", () => {
     expect(fmtCompactCOP(45000)).toBe("$45k");
-    expect(fmtCompactCOP(1500)).toBe("$1.5k");
+    expect(fmtCompactCOP(1500)).toBe("$1,5k");
   });
   it("abbreviates millions with M", () => {
-    expect(fmtCompactCOP(1234567)).toBe("$1.2M");
+    expect(fmtCompactCOP(1234567)).toBe("$1,2M");
     expect(fmtCompactCOP(15000000)).toBe("$15M");
+  });
+  it("rounds a value just under a million up to M instead of the confusing '1000k'", () => {
+    expect(fmtCompactCOP(999999)).toBe("$1M");
+    expect(fmtCompactCOP(999499)).toBe("$999k");
   });
   it("preserves the sign for negative amounts", () => {
     expect(fmtCompactCOP(-45000)).toBe("-$45k");
