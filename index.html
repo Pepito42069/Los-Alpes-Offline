@@ -447,8 +447,8 @@ function viewProduccion(){
         <input type="checkbox" id="has-calves-toggle" style="width:auto" ${hasCalves?'checked':''}>
         <span style="font-weight:600;color:var(--ink-faint)">Hay terneros lactando en este período</span>
       </label>
-      ${hasCalves?`<div class="field"><label>Consumo terneros (L)</label>
-        <input class="mono" type="number" step="0.1" min="0" name="calfConsumption" value="${em?esc(em.calfConsumption):''}" placeholder="0"></div>`:""}
+      <div class="field" id="calf-consumption-field" style="${hasCalves?'':'display:none'}"><label>Consumo terneros (L)</label>
+        <input class="mono" type="number" step="0.1" min="0" name="calfConsumption" value="${em?esc(em.calfConsumption):''}" placeholder="0"></div>
       <div class="fields2">
         <div class="field"><label>Litros entregados al lechero (L)</label>
           <input class="mono" type="number" step="0.1" min="0" name="deliveredToMilkman" value="${em?esc(em.deliveredToMilkman||''):''}" placeholder="0"></div>
@@ -747,6 +747,7 @@ function viewReportes(){
       <thead><tr>
         <th>Vaca</th>
         <th style="text-align:right">Litros</th>
+        <th style="text-align:right">Litros netos</th>
         <th style="text-align:right">Ingreso</th>
         <th style="text-align:right">Costo asig.</th>
         <th style="text-align:right">Margen</th>
@@ -755,13 +756,14 @@ function viewReportes(){
         ${profit.rows.map(r=>`<tr>
           <td>${esc(r.name)}</td>
           <td class="mono" style="text-align:right">${r.liters.toFixed(1)}</td>
+          <td class="mono muted" style="text-align:right">${r.netLiters.toFixed(1)}</td>
           <td class="mono ok" style="text-align:right">${fmtCOP(r.ingreso)}</td>
           <td class="mono warn" style="text-align:right">−${fmtCOP(r.assignedCost)}</td>
           <td class="mono ${r.margin<0?'warn':'ok'}" style="text-align:right;font-weight:700">${fmtCOP(r.margin)}</td>
         </tr>`).join("")}
       </tbody>
     </table>
-    <p class="muted" style="margin-top:10px">El “costo asignado” es una estimación: el gasto de <strong>${esc(CONCENTRADO_CATEGORY)}</strong> del periodo (${fmtCOP(profit.concentradoCost)}) se reparte entre las vacas en proporción a los litros que produjo cada una (${profit.totalLiters.toFixed(1)} L en total), no es un gasto medido por vaca individual. El ingreso valora los litros producidos al precio por litro registrado cada día.</p>`}
+    <p class="muted" style="margin-top:10px">Los “litros netos” de cada vaca son sus litros producidos menos su parte proporcional del consumo de la casa (y de terneros, cuando aplica) ese día, según el porcentaje que representó en la producción total. El ingreso valora esos litros netos al precio por litro registrado cada día — es decir, refleja lo que realmente se vendió, no lo que la vaca produjo en bruto. El “costo asignado” es una estimación aparte: el gasto de <strong>${esc(CONCENTRADO_CATEGORY)}</strong> del periodo (${fmtCOP(profit.concentradoCost)}) se reparte entre las vacas en proporción a los litros brutos que produjo cada una (${profit.totalLiters.toFixed(1)} L en total), no es un gasto medido por vaca individual.</p>`}
   </div>`;
 }
 
@@ -934,7 +936,15 @@ function bindEvents(){
   if(levTo) levTo.addEventListener("change",()=>{ state.levTo=levTo.value; render(); });
 
   const calvesToggle = document.getElementById("has-calves-toggle");
-  if(calvesToggle) calvesToggle.addEventListener("change", ()=>{ window._hasCalves = calvesToggle.checked; render(); });
+  if(calvesToggle) calvesToggle.addEventListener("change", ()=>{
+    window._hasCalves = calvesToggle.checked;
+    // Toggle visibility only (no re-render): re-rendering would rebuild the
+    // whole form from scratch and lose whatever the farmer already typed —
+    // including the calf consumption value itself, which must survive being
+    // hidden so it reappears if the switch is turned back on.
+    const calfField = document.getElementById("calf-consumption-field");
+    if(calfField) calfField.style.display = calvesToggle.checked ? "" : "none";
+  });
 
   const milkForm = document.getElementById("milk-form");
   if(milkForm){
