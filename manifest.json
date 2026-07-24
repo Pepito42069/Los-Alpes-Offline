@@ -1,6 +1,6 @@
 {
-  "name": "Mi Finca — Cuentas e Inventario",
-  "short_name": "Mi Finca",
+  "name": "Hacienda Los Alpes — Cuentas e Inventario",
+  "short_name": "Hacienda Los Alpes",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#E4D8B8",
