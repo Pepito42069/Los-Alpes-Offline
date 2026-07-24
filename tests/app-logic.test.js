@@ -9,7 +9,7 @@ import {
   parseTransactionForm, parseInventoryForm, parseMilkForm, parseCowForm,
   milkTransactionId, getLastMilkPrice, computeMilkSaleTransaction,
   syncMilkSaleTransaction, removeMilkSaleTransaction,
-  COW_STATES, cowEstado, isProductionCow, milkFormCows, computeCowProfitability,
+  COW_STATES, cowEstado, isProductionCow, milkFormCows, cowNetLitersForRecord, computeCowProfitability,
   HERD_EVENT_TYPES, parseHerdEventForm, summarizeHerd,
   LEVANTE_STATES, parseLevanteForm, levanteGanancia, computeLevanteProfit,
 } from "../app-logic.js";
@@ -534,12 +534,12 @@ describe("parseMilkForm", () => {
     expect(record.pricePerLiter).toBe(2000);
   });
 
-  it("ignores calfConsumption when there are no calves", () => {
+  it("keeps a stored calfConsumption value even when there are no calves, so it's not lost if re-enabled", () => {
     const getValue = makeGetValue({
       date: "2026-01-01", am_c1: "6", pm_c1: "4", farmConsumption: "2", calfConsumption: "3",
     });
     const { record } = parseMilkForm(getValue, cows, false);
-    expect(record.calfConsumption).toBe(0);
+    expect(record.calfConsumption).toBe(3);
     expect(record.hasCalves).toBe(false);
   });
 
@@ -566,10 +566,10 @@ describe("parseMilkForm", () => {
     expect(record.perCow).toEqual({ c1: { am: 0, pm: 0 } });
   });
 
-  it("forces calfConsumption to zero and records hasCalves:false when there are no calves", () => {
+  it("records hasCalves:false without erasing whatever calfConsumption was on the form", () => {
     const getValue = makeGetValue({ date: "2026-01-01", calfConsumption: "7" });
     const { record } = parseMilkForm(getValue, cows, false);
-    expect(record.calfConsumption).toBe(0);
+    expect(record.calfConsumption).toBe(7);
     expect(record.hasCalves).toBe(false);
   });
 
@@ -664,6 +664,48 @@ describe("milkFormCows", () => {
   });
 });
 
+describe("cowNetLitersForRecord", () => {
+  it("splits house consumption across cows in proportion to each one's share of the day's production", () => {
+    const record = { farmConsumption: 6, perCow: { c1: { am: 10, pm: 10 }, c2: { am: 5, pm: 5 } } };
+    const net = cowNetLitersForRecord(record);
+    // c1: 20/30 of 6 = 4 -> 20-4=16 ; c2: 10/30 of 6 = 2 -> 10-2=8
+    expect(net.c1).toBeCloseTo(16, 5);
+    expect(net.c2).toBeCloseTo(8, 5);
+  });
+
+  it("also deducts calf consumption proportionally when hasCalves is true", () => {
+    const record = { farmConsumption: 2, calfConsumption: 4, hasCalves: true, perCow: { c1: { am: 10, pm: 0 }, c2: { am: 10, pm: 0 } } };
+    const net = cowNetLitersForRecord(record);
+    // total consumo = 6, split evenly (10/20 each) -> 3 each -> 10-3=7
+    expect(net.c1).toBeCloseTo(7, 5);
+    expect(net.c2).toBeCloseTo(7, 5);
+  });
+
+  it("ignores calfConsumption when hasCalves is false, even if the value is still stored on the record", () => {
+    const record = { farmConsumption: 2, calfConsumption: 4, hasCalves: false, perCow: { c1: { am: 10, pm: 0 } } };
+    const net = cowNetLitersForRecord(record);
+    // only farmConsumption (2) counts -> 10-2=8
+    expect(net.c1).toBeCloseTo(8, 5);
+  });
+
+  it("treats a record with no hasCalves field as having calves (backward compatibility)", () => {
+    const record = { farmConsumption: 0, calfConsumption: 4, perCow: { c1: { am: 10, pm: 0 } } };
+    const net = cowNetLitersForRecord(record);
+    expect(net.c1).toBeCloseTo(6, 5);
+  });
+
+  it("returns an empty object when there is no production that day (no division by zero)", () => {
+    const record = { farmConsumption: 5, perCow: {} };
+    expect(cowNetLitersForRecord(record)).toEqual({});
+  });
+
+  it("skips cows with zero or negative liters", () => {
+    const record = { farmConsumption: 3, perCow: { c1: { am: 10, pm: 0 }, c2: { am: 0, pm: 0 } } };
+    const net = cowNetLitersForRecord(record);
+    expect(net).toEqual({ c1: 7 });
+  });
+});
+
 describe("computeCowProfitability", () => {
   const cows = [
     { id: "c1", name: "Lola", estado: "En producción" },
@@ -733,6 +775,42 @@ describe("computeCowProfitability", () => {
     const lola = rows.find(r => r.cowId === "c1");
     expect(lola.ingreso).toBe(0);
     expect(lola.assignedCost).toBeCloseTo(10000, 5); // still 10/20 share of cost
+  });
+
+  it("values income using each cow's net liters (after its proportional share of house/calf consumption), while assignedCost still uses raw liters", () => {
+    const records = [
+      {
+        id: "m1", date: "2026-01-05", pricePerLiter: 2000, farmConsumption: 6, calfConsumption: 3, hasCalves: true,
+        perCow: { c1: { am: 10, pm: 10 }, c2: { am: 5, pm: 5 } }, // raw: c1=20, c2=10, total=30, consumo=9
+      },
+    ];
+    const txs = [{ id: "t1", type: "gasto", category: "Concentrado y sales", amount: 30000, date: "2026-01-05" }];
+    const { rows, totalLiters } = computeCowProfitability(cows, records, txs, "2026-01-01", "2026-01-31");
+    expect(totalLiters).toBe(30); // raw liters, unaffected by consumption
+    const lola = rows.find(r => r.cowId === "c1");   // 20/30 share
+    const manchas = rows.find(r => r.cowId === "c2"); // 10/30 share
+    // c1 net = 20 - (20/30)*9 = 14 ; c2 net = 10 - (10/30)*9 = 7
+    expect(lola.liters).toBe(20);
+    expect(lola.netLiters).toBeCloseTo(14, 5);
+    expect(lola.ingreso).toBeCloseTo(28000, 5); // 14 × 2000
+    expect(lola.assignedCost).toBeCloseTo(20000, 5); // still raw-liters share: 30000 × 20/30
+    expect(manchas.liters).toBe(10);
+    expect(manchas.netLiters).toBeCloseTo(7, 5);
+    expect(manchas.ingreso).toBeCloseTo(14000, 5); // 7 × 2000
+    expect(manchas.assignedCost).toBeCloseTo(10000, 5); // 30000 × 10/30
+  });
+
+  it("does not deduct calf consumption from net liters when hasCalves is false, even though calfConsumption is stored", () => {
+    const records = [
+      {
+        id: "m1", date: "2026-01-05", pricePerLiter: 1000, farmConsumption: 0, calfConsumption: 8, hasCalves: false,
+        perCow: { c1: { am: 10, pm: 0 } },
+      },
+    ];
+    const { rows } = computeCowProfitability(cows, records, [], "2026-01-01", "2026-01-31");
+    const lola = rows.find(r => r.cowId === "c1");
+    expect(lola.netLiters).toBeCloseTo(10, 5); // full liters kept, calfConsumption ignored
+    expect(lola.ingreso).toBeCloseTo(10000, 5);
   });
 });
 

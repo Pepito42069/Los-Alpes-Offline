@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Mi Finca — Cuentas e Inventario</title>
+<title>Hacienda Los Alpes — Cuentas e Inventario</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#24402A">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Mi Finca">
+<meta name="apple-mobile-web-app-title" content="Hacienda Los Alpes">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
   :root{
@@ -45,6 +45,8 @@
     box-shadow: 0 2px 10px rgba(0,0,0,.15);
   }
   header h1{ margin:0; color:var(--paper); font-size:21px; font-weight:800; letter-spacing:.2px; display:flex; align-items:center; gap:8px; }
+  .logo-badge{ flex-shrink:0; width:30px; height:30px; border-radius:8px; background:var(--paper); display:flex; align-items:center; justify-content:center; }
+  .logo-badge svg{ width:20px; height:20px; }
   header p{ margin:3px 0 12px; color:var(--olive-light); font-size:12px; letter-spacing:.1px; }
   /* Tabs fill the width when they fit; on a narrow phone they keep a legible
      min-width and the bar scrolls sideways instead of squishing the labels. */
@@ -168,7 +170,7 @@
 </head>
 <body>
 <header>
-  <h1>🌾 <span id="finca-nombre">Mi Finca</span></h1>
+  <h1><span class="logo-badge"><svg viewBox="0 0 100 100" fill="none" stroke="#24402A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><path d="M23,25 L77,25 L58,56 Q50,63 42,56 L23,25 Z"/><path d="M50,60 L50,80"/><path d="M30,82 Q40,91 50,83 Q60,75 70,82"/></svg></span> <span id="finca-nombre">Hacienda Los Alpes</span></h1>
   <p>Ganado de levante y leche · Cuentas e inventario · funciona sin internet</p>
 </header>
 <nav id="tabnav" class="no-print"></nav>
@@ -447,8 +449,8 @@ function viewProduccion(){
         <input type="checkbox" id="has-calves-toggle" style="width:auto" ${hasCalves?'checked':''}>
         <span style="font-weight:600;color:var(--ink-faint)">Hay terneros lactando en este período</span>
       </label>
-      ${hasCalves?`<div class="field"><label>Consumo terneros (L)</label>
-        <input class="mono" type="number" step="0.1" min="0" name="calfConsumption" value="${em?esc(em.calfConsumption):''}" placeholder="0"></div>`:""}
+      <div class="field" id="calf-consumption-field" style="${hasCalves?'':'display:none'}"><label>Consumo terneros (L)</label>
+        <input class="mono" type="number" step="0.1" min="0" name="calfConsumption" value="${em?esc(em.calfConsumption):''}" placeholder="0"></div>
       <div class="fields2">
         <div class="field"><label>Litros entregados al lechero (L)</label>
           <input class="mono" type="number" step="0.1" min="0" name="deliveredToMilkman" value="${em?esc(em.deliveredToMilkman||''):''}" placeholder="0"></div>
@@ -747,6 +749,7 @@ function viewReportes(){
       <thead><tr>
         <th>Vaca</th>
         <th style="text-align:right">Litros</th>
+        <th style="text-align:right">Litros netos</th>
         <th style="text-align:right">Ingreso</th>
         <th style="text-align:right">Costo asig.</th>
         <th style="text-align:right">Margen</th>
@@ -755,13 +758,14 @@ function viewReportes(){
         ${profit.rows.map(r=>`<tr>
           <td>${esc(r.name)}</td>
           <td class="mono" style="text-align:right">${r.liters.toFixed(1)}</td>
+          <td class="mono muted" style="text-align:right">${r.netLiters.toFixed(1)}</td>
           <td class="mono ok" style="text-align:right">${fmtCOP(r.ingreso)}</td>
           <td class="mono warn" style="text-align:right">−${fmtCOP(r.assignedCost)}</td>
           <td class="mono ${r.margin<0?'warn':'ok'}" style="text-align:right;font-weight:700">${fmtCOP(r.margin)}</td>
         </tr>`).join("")}
       </tbody>
     </table>
-    <p class="muted" style="margin-top:10px">El “costo asignado” es una estimación: el gasto de <strong>${esc(CONCENTRADO_CATEGORY)}</strong> del periodo (${fmtCOP(profit.concentradoCost)}) se reparte entre las vacas en proporción a los litros que produjo cada una (${profit.totalLiters.toFixed(1)} L en total), no es un gasto medido por vaca individual. El ingreso valora los litros producidos al precio por litro registrado cada día.</p>`}
+    <p class="muted" style="margin-top:10px">Los “litros netos” de cada vaca son sus litros producidos menos su parte proporcional del consumo de la casa (y de terneros, cuando aplica) ese día, según el porcentaje que representó en la producción total. El ingreso valora esos litros netos al precio por litro registrado cada día — es decir, refleja lo que realmente se vendió, no lo que la vaca produjo en bruto. El “costo asignado” es una estimación aparte: el gasto de <strong>${esc(CONCENTRADO_CATEGORY)}</strong> del periodo (${fmtCOP(profit.concentradoCost)}) se reparte entre las vacas en proporción a los litros brutos que produjo cada una (${profit.totalLiters.toFixed(1)} L en total), no es un gasto medido por vaca individual.</p>`}
   </div>`;
 }
 
@@ -934,7 +938,15 @@ function bindEvents(){
   if(levTo) levTo.addEventListener("change",()=>{ state.levTo=levTo.value; render(); });
 
   const calvesToggle = document.getElementById("has-calves-toggle");
-  if(calvesToggle) calvesToggle.addEventListener("change", ()=>{ window._hasCalves = calvesToggle.checked; render(); });
+  if(calvesToggle) calvesToggle.addEventListener("change", ()=>{
+    window._hasCalves = calvesToggle.checked;
+    // Toggle visibility only (no re-render): re-rendering would rebuild the
+    // whole form from scratch and lose whatever the farmer already typed —
+    // including the calf consumption value itself, which must survive being
+    // hidden so it reappears if the switch is turned back on.
+    const calfField = document.getElementById("calf-consumption-field");
+    if(calfField) calfField.style.display = calvesToggle.checked ? "" : "none";
+  });
 
   const milkForm = document.getElementById("milk-form");
   if(milkForm){

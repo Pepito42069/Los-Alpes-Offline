@@ -161,25 +161,52 @@ export function computeReport(transactions, from, to){
 const cowLitersFromEntry = (v) =>
   (v && typeof v === "object") ? (parseFloat(v.am)||0) + (parseFloat(v.pm)||0) : (parseFloat(v)||0);
 
-// Per-cow profitability over a date range. Income is each cow's produced
-// liters valued at that day's registered price. The concentrado-y-sales
-// expense is NOT measured per animal, so it's split across cows in proportion
-// to each one's share of total production in the period — an estimate, flagged
-// as such in the UI. Rows cover every cow that produced in the range (a cow
-// dried off after producing still contributed to that period's costs), sorted
-// by margin descending.
+// A day's house consumption (and calf consumption, only while hasCalves is on)
+// isn't attributable to one cow — it's split across cows in proportion to each
+// one's share of that day's total production. What's left per cow is its
+// "producido neto": the part of its milk that was actually available to sell,
+// not just what it physically gave.
+export function cowNetLitersForRecord(record){
+  const raw = {};
+  let dayTotal = 0;
+  Object.entries(record.perCow || {}).forEach(([cowId, v]) => {
+    const liters = cowLitersFromEntry(v);
+    if(liters <= 0) return;
+    raw[cowId] = liters;
+    dayTotal += liters;
+  });
+  const consumo = (record.farmConsumption||0) + (record.hasCalves===false ? 0 : (record.calfConsumption||0));
+  const net = {};
+  Object.entries(raw).forEach(([cowId, liters]) => {
+    const share = dayTotal > 0 ? (liters / dayTotal) * consumo : 0;
+    net[cowId] = liters - share;
+  });
+  return net;
+}
+
+// Per-cow profitability over a date range. Income is each cow's *net*
+// production (after its proportional share of house/calf consumption) valued
+// at that day's registered price — what actually left the farm to be sold,
+// not the raw liters it gave. The concentrado-y-sales expense is NOT measured
+// per animal, so it's split across cows in proportion to each one's share of
+// raw production in the period — an estimate, flagged as such in the UI. Rows
+// cover every cow that produced in the range (a cow dried off after producing
+// still contributed to that period's costs), sorted by margin descending.
 export function computeCowProfitability(cows, milkRecords, transactions, from, to){
   const inRange = milkRecords.filter(r => r.date >= from && r.date <= to);
   const perCow = {};
   let totalLiters = 0;
   inRange.forEach(r => {
     const price = (typeof r.pricePerLiter === "number" && r.pricePerLiter > 0) ? r.pricePerLiter : 0;
+    const netByCow = cowNetLitersForRecord(r);
     Object.entries(r.perCow || {}).forEach(([cowId, v]) => {
       const liters = cowLitersFromEntry(v);
       if(liters <= 0) return;
-      if(!perCow[cowId]) perCow[cowId] = { liters: 0, ingreso: 0 };
+      if(!perCow[cowId]) perCow[cowId] = { liters: 0, netLiters: 0, ingreso: 0 };
+      const net = netByCow[cowId] || 0;
       perCow[cowId].liters += liters;
-      perCow[cowId].ingreso += liters * price;
+      perCow[cowId].netLiters += net;
+      perCow[cowId].ingreso += net * price;
       totalLiters += liters;
     });
   });
@@ -198,6 +225,7 @@ export function computeCowProfitability(cows, milkRecords, transactions, from, t
       cowId,
       name: nameById[cowId] || "(vaca eliminada)",
       liters: agg.liters,
+      netLiters: agg.netLiters,
       ingreso: agg.ingreso,
       assignedCost,
       margin: agg.ingreso - assignedCost,
@@ -295,7 +323,10 @@ export function parseMilkForm(getValue, cows, hasCalves = true){
     }
   });
   const farmConsumption = parseFloat(getValue("farmConsumption"))||0;
-  const calfConsumption = hasCalves ? (parseFloat(getValue("calfConsumption"))||0) : 0;
+  // Keep whatever calf-consumption value is on the form even when hasCalves is
+  // off: the switch controls whether it counts in calculations and whether
+  // it's shown, not whether the number itself is remembered.
+  const calfConsumption = parseFloat(getValue("calfConsumption"))||0;
   return {
     valid: true,
     record: {
