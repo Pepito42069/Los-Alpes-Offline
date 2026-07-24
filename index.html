@@ -190,7 +190,8 @@ import {
   getLastMilkPrice, syncMilkSaleTransaction, removeMilkSaleTransaction,
   cowEstado, isProductionCow, milkFormCows, computeCowProfitability,
   parseHerdEventForm, summarizeHerd,
-  parseLevanteForm, computeLevanteProfit,
+  parseLevanteForm, computeLevanteProfit, syncLevanteSaleTransaction, removeLevanteSaleTransaction,
+  applyInventoryRestock,
 } from "./app-logic.js";
 
 // ---------- State ----------
@@ -318,6 +319,18 @@ function viewCuentas(){
           <input type="text" name="note" value="${e?esc(e.note||''):''}" placeholder="Detalle">
         </div>
       </div>
+      ${(!e && type==="gasto") ? `
+      <div class="fields2">
+        <div class="field"><label>Ítem de inventario relacionado (opcional)</label>
+          <select name="restockItemId">
+            <option value="">— Ninguno —</option>
+            ${[...state.inventory].sort((a,b)=>a.name.localeCompare(b.name)).map(i=>`<option value="${esc(i.id)}">${esc(i.name)} (${esc(i.unit)})</option>`).join("")}
+          </select>
+        </div>
+        <div class="field"><label>Cantidad comprada (opcional)</label>
+          <input class="mono" type="number" step="0.01" min="0" name="restockQuantity" placeholder="0"></div>
+      </div>
+      <p class="muted" style="margin-top:-6px;margin-bottom:10px">Si eliges un ítem y una cantidad, se sumará automáticamente al inventario.</p>` : ""}
       <div style="display:flex;justify-content:flex-end;gap:8px">
         ${e?`<button type="button" class="btn btn-ghost" id="tx-cancel">Cancelar</button>`:""}
         <button type="submit" class="btn ${e?'btn-ochre':'btn-green'}">${e?'Guardar cambios':'➕ Registrar'}</button>
@@ -331,18 +344,24 @@ function viewCuentas(){
   </div>
   <div class="card">
     ${list.length===0 ? `<p class="empty">Sin movimientos registrados.</p>` :
-      list.map(t=>`
+      list.map(t=>{
+        const restockItem = t.restockItemId ? state.inventory.find(i=>i.id===t.restockItemId) : null;
+        const restockNote = t.restockItemId
+          ? `+${esc(t.restockQuantity)} ${restockItem?esc(restockItem.unit):''} en inventario${restockItem?' ('+esc(restockItem.name)+')':' (ítem eliminado)'}`
+          : '';
+        return `
       <div class="row">
         <div style="min-width:0">
           <div style="font-weight:600;font-size:14px">${esc(t.category)}</div>
-          <div class="muted">${fmtDate(t.date)}${t.note?' · '+esc(t.note):''}</div>
+          <div class="muted">${fmtDate(t.date)}${t.note?' · '+esc(t.note):''}${restockNote?' · '+restockNote:''}</div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
           <span class="mono ${t.type==='ingreso'?'ok':'warn'}" style="font-weight:700;font-size:13px">${t.type==='ingreso'?'+':'−'}${fmtCOP(t.amount)}</span>
           <button class="icon-btn" data-edit-tx="${esc(t.id)}">✎</button>
           <button class="icon-btn" data-del-tx="${esc(t.id)}">✕</button>
         </div>
-      </div>`).join("")}
+      </div>`;
+      }).join("")}
   </div>`;
 }
 
@@ -830,10 +849,18 @@ function bindEvents(){
       const { valid, record: rec } = parseTransactionForm({
         id: fd.get("id"), type: fd.get("type"), category: fd.get("category"),
         amount: fd.get("amount"), date: fd.get("date"), note: fd.get("note"),
+        restockItemId: fd.get("restockItemId"), restockQuantity: fd.get("restockQuantity"),
       });
       if(!valid) return;
       const idx = state.transactions.findIndex(t=>t.id===rec.id);
+      const isNew = idx < 0;
       if(idx>=0) state.transactions[idx]=rec; else state.transactions.push(rec);
+      // Only bump stock when the purchase is first registered, not on later
+      // edits — otherwise re-saving the same transaction would add the
+      // quantity again each time.
+      if(isNew && rec.restockItemId && rec.restockQuantity > 0){
+        state.inventory = applyInventoryRestock(state.inventory, rec.restockItemId, rec.restockQuantity);
+      }
       state.editingTx = null; window._txType = null;
       saveData(localStorage, state); render();
     });
@@ -963,6 +990,7 @@ function bindEvents(){
       if(!valid){ alert("Revisa los datos: para marcar como vendido necesitas fecha y precio de venta."); return; }
       const idx = state.levanteAnimals.findIndex(a=>a.id===rec.id);
       if(idx>=0) state.levanteAnimals[idx]=rec; else state.levanteAnimals.push(rec);
+      state.transactions = syncLevanteSaleTransaction(state.transactions, rec);
       state.editingLevante = null; window._levSold = null;
       saveData(localStorage, state); render();
     });
@@ -975,8 +1003,9 @@ function bindEvents(){
     render();
   }));
   document.querySelectorAll("[data-del-lev]").forEach(b=>b.addEventListener("click",()=>{
-    if(confirm("¿Eliminar este animal de levante?")){
+    if(confirm("¿Eliminar este animal de levante? También se eliminará la venta generada en Cuentas, si existe.")){
       state.levanteAnimals = state.levanteAnimals.filter(a=>a.id!==b.dataset.delLev);
+      state.transactions = removeLevanteSaleTransaction(state.transactions, b.dataset.delLev);
       saveData(localStorage, state); render();
     }
   }));
