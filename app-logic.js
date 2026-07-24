@@ -19,16 +19,37 @@ export const cowEstado = (cow) => COW_STATES.includes(cow?.estado) ? cow.estado 
 export const isProductionCow = (cow) => cowEstado(cow) === "En producción";
 
 export const uid = () => Math.random().toString(36).slice(2,10);
-export const fmtCOP = (n) => new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(n||0);
-// Short form for labels drawn directly on chart bars, where a full "$1.234.567"
-// would overflow a 12px-wide bar's column (e.g. "$1,2M", "$45k", "$900").
+
+// Compact "X,XM" form for a millions-scale amount, es-CO style (comma
+// decimal): whole millions drop the decimal ("15M"), amounts at ten million
+// or above round to a whole number of millions rather than showing a
+// fraction that no longer fits.
+const formatMillonesCompact = (abs) =>
+  (abs/1000000).toFixed(abs>=10000000?0:1).replace(/\.0$/,"").replace(".", ",") + "M";
+
+// Any amount of a million or more is shown compactly as "$ X,XM" instead of
+// the full "$ 1.500.000" — throughout the app, not just in charts — so large
+// totals stay readable at a glance. Amounts under a million keep the normal
+// es-CO currency format in full.
+export const fmtCOP = (n) => {
+  const v = n || 0;
+  const abs = Math.abs(v);
+  if(abs >= 1000000) return `${v<0?"-":""}$ ${formatMillonesCompact(abs)}`;
+  return new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(v);
+};
+
+// Even shorter form for labels drawn directly on chart bars, where even a
+// full "$450.000" would overflow a 12px-wide bar's column: thousands also
+// get abbreviated here ("$45k"), not just millions. The k branch switches to
+// M a little before exactly a million (999.500) so a value like 999.900
+// rounds to "1M" instead of the confusing "1000k".
 export function fmtCompactCOP(n){
   const v = n || 0;
   const sign = v < 0 ? "-" : "";
   const abs = Math.abs(v);
   let body;
-  if(abs >= 1000000) body = (abs/1000000).toFixed(abs>=10000000?0:1).replace(/\.0$/,"") + "M";
-  else if(abs >= 1000) body = (abs/1000).toFixed(abs>=10000?0:1).replace(/\.0$/,"") + "k";
+  if(abs >= 999500) body = formatMillonesCompact(abs);
+  else if(abs >= 1000) body = (abs/1000).toFixed(abs>=10000?0:1).replace(/\.0$/,"").replace(".", ",") + "k";
   else body = Math.round(abs).toString();
   return sign + "$" + body;
 }
