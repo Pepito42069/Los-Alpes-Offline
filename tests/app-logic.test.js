@@ -9,10 +9,11 @@ import {
   buildTransactionsCsv, buildBackupPayload, parseBackupData,
   parseTransactionForm, parseInventoryForm, parseMilkForm, parseCowForm,
   milkTransactionId, getLastMilkPrice, computeMilkSaleTransaction,
-  syncMilkSaleTransaction, removeMilkSaleTransaction,
+  syncMilkSaleTransaction, removeMilkSaleTransaction, applyInventoryRestock,
   COW_STATES, cowEstado, isProductionCow, milkFormCows, cowNetLitersForRecord, computeCowProfitability,
   HERD_EVENT_TYPES, parseHerdEventForm, summarizeHerd,
   LEVANTE_STATES, parseLevanteForm, levanteGanancia, computeLevanteProfit,
+  levanteTransactionId, computeLevanteSaleTransaction, syncLevanteSaleTransaction, removeLevanteSaleTransaction,
 } from "../app-logic.js";
 
 function makeFakeStorage(){
@@ -550,6 +551,71 @@ describe("parseTransactionForm", () => {
     ["missing date", { amount: "10", date: "" }],
   ])("rejects %s", (_label, fields) => {
     expect(parseTransactionForm({ type: "ingreso", category: "Otros ingresos", ...fields }).valid).toBe(false);
+  });
+
+  it("keeps restockItemId/restockQuantity when both are present and the quantity is positive", () => {
+    const { record } = parseTransactionForm({
+      type: "gasto", category: "Concentrado y sales", amount: "50000", date: "2026-01-01",
+      restockItemId: "inv1", restockQuantity: "3.5",
+    });
+    expect(record.restockItemId).toBe("inv1");
+    expect(record.restockQuantity).toBe(3.5);
+  });
+
+  it("drops the restock link when only the item or only the quantity is given", () => {
+    const onlyItem = parseTransactionForm({
+      type: "gasto", category: "Concentrado y sales", amount: "50000", date: "2026-01-01", restockItemId: "inv1",
+    }).record;
+    expect(onlyItem.restockItemId).toBeNull();
+    expect(onlyItem.restockQuantity).toBeNull();
+
+    const onlyQty = parseTransactionForm({
+      type: "gasto", category: "Concentrado y sales", amount: "50000", date: "2026-01-01", restockQuantity: "3",
+    }).record;
+    expect(onlyQty.restockItemId).toBeNull();
+    expect(onlyQty.restockQuantity).toBeNull();
+  });
+
+  it("drops the restock link when the quantity is zero or negative", () => {
+    const { record } = parseTransactionForm({
+      type: "gasto", category: "Concentrado y sales", amount: "50000", date: "2026-01-01",
+      restockItemId: "inv1", restockQuantity: "0",
+    });
+    expect(record.restockItemId).toBeNull();
+    expect(record.restockQuantity).toBeNull();
+  });
+});
+
+describe("applyInventoryRestock", () => {
+  const inventory = [
+    { id: "inv1", name: "Concentrado 18%", category: "Concentrado y sales", quantity: 10, unit: "Cantidad", unitValue: 50000 },
+    { id: "inv2", name: "Vacuna X", category: "Medicamentos veterinarios", quantity: 5, unit: "Cantidad", unitValue: 20000 },
+  ];
+
+  it("adds the purchased quantity to the matching item and updates lastUpdated", () => {
+    const next = applyInventoryRestock(inventory, "inv1", 4, "2026-02-01");
+    const item = next.find(i => i.id === "inv1");
+    expect(item.quantity).toBe(14);
+    expect(item.lastUpdated).toBe("2026-02-01");
+    // other item untouched
+    expect(next.find(i => i.id === "inv2").quantity).toBe(5);
+  });
+
+  it("returns the inventory unchanged when the item id doesn't match anything", () => {
+    const next = applyInventoryRestock(inventory, "missing", 4);
+    expect(next).toEqual(inventory);
+  });
+
+  it("returns the inventory unchanged when itemId or quantity is missing/non-positive", () => {
+    expect(applyInventoryRestock(inventory, null, 4)).toEqual(inventory);
+    expect(applyInventoryRestock(inventory, "inv1", 0)).toEqual(inventory);
+    expect(applyInventoryRestock(inventory, "inv1", -2)).toEqual(inventory);
+  });
+
+  it("does not mutate the original inventory array", () => {
+    const original = JSON.parse(JSON.stringify(inventory));
+    applyInventoryRestock(inventory, "inv1", 4);
+    expect(inventory).toEqual(original);
   });
 });
 
@@ -1118,5 +1184,73 @@ describe("computeLevanteProfit", () => {
     const { sold, totalGanancia } = computeLevanteProfit(animals, "2030-01-01", "2030-12-31");
     expect(sold).toEqual([]);
     expect(totalGanancia).toBe(0);
+  });
+});
+
+describe("computeLevanteSaleTransaction", () => {
+  it("generates an ingreso transaction for a sold animal with a positive sale price", () => {
+    const animal = { id: "a1", estado: "Vendido", saleDate: "2026-03-10", salePrice: 1400000 };
+    const tx = computeLevanteSaleTransaction(animal);
+    expect(tx).toMatchObject({
+      id: levanteTransactionId("a1"),
+      type: "ingreso",
+      category: "Venta de ganado de levante",
+      amount: 1400000,
+      date: "2026-03-10",
+    });
+  });
+
+  it("returns null when the animal isn't marked as sold", () => {
+    const animal = { id: "a1", estado: "En levante", saleDate: null, salePrice: null };
+    expect(computeLevanteSaleTransaction(animal)).toBeNull();
+  });
+
+  it("returns null when the sale price is zero or missing", () => {
+    expect(computeLevanteSaleTransaction({ id: "a1", estado: "Vendido", saleDate: "2026-03-10", salePrice: 0 })).toBeNull();
+    expect(computeLevanteSaleTransaction({ id: "a1", estado: "Vendido", saleDate: "2026-03-10", salePrice: null })).toBeNull();
+  });
+});
+
+describe("syncLevanteSaleTransaction / removeLevanteSaleTransaction", () => {
+  it("adds a new linked transaction for a newly sold animal", () => {
+    const animal = { id: "a1", estado: "Vendido", saleDate: "2026-03-10", salePrice: 1400000 };
+    const next = syncLevanteSaleTransaction([], animal);
+    expect(next).toHaveLength(1);
+    expect(next[0].id).toBe(levanteTransactionId("a1"));
+    expect(next[0].amount).toBe(1400000);
+  });
+
+  it("updates the existing linked transaction in place when the animal is re-saved", () => {
+    const animal = { id: "a1", estado: "Vendido", saleDate: "2026-03-10", salePrice: 1400000 };
+    const first = syncLevanteSaleTransaction([], animal);
+    const updated = { ...animal, salePrice: 1600000 };
+    const next = syncLevanteSaleTransaction(first, updated);
+    expect(next).toHaveLength(1);
+    expect(next[0].amount).toBe(1600000);
+  });
+
+  it("removes the linked transaction if the animal no longer qualifies (e.g. price cleared)", () => {
+    const animal = { id: "a1", estado: "Vendido", saleDate: "2026-03-10", salePrice: 1400000 };
+    const withTx = syncLevanteSaleTransaction([], animal);
+    const noLongerSold = { ...animal, estado: "En levante", salePrice: null, saleDate: null };
+    const next = syncLevanteSaleTransaction(withTx, noLongerSold);
+    expect(next).toEqual([]);
+  });
+
+  it("leaves unrelated transactions untouched", () => {
+    const other = { id: "t-other", type: "gasto", category: "Transporte", amount: 100, date: "2026-01-01" };
+    const animal = { id: "a1", estado: "Vendido", saleDate: "2026-03-10", salePrice: 1400000 };
+    const next = syncLevanteSaleTransaction([other], animal);
+    expect(next).toHaveLength(2);
+    expect(next).toContainEqual(other);
+  });
+
+  it("removeLevanteSaleTransaction removes only the transaction linked to that animal", () => {
+    const animal1 = { id: "a1", estado: "Vendido", saleDate: "2026-03-10", salePrice: 1400000 };
+    const animal2 = { id: "a2", estado: "Vendido", saleDate: "2026-03-11", salePrice: 900000 };
+    let txs = syncLevanteSaleTransaction([], animal1);
+    txs = syncLevanteSaleTransaction(txs, animal2);
+    const next = removeLevanteSaleTransaction(txs, "a1");
+    expect(next.map(t => t.id)).toEqual([levanteTransactionId("a2")]);
   });
 });

@@ -328,9 +328,15 @@ export function parseBackupData(jsonString){
 }
 
 // ---------- Form parsing / validation ----------
+// The two restock fields are optional and only meaningful for a "gasto":
+// linking an inventory item and a quantity purchased lets the transaction
+// also bump that item's stock (see applyInventoryRestock). Both must be
+// present and the quantity positive, or neither is kept.
 export function parseTransactionForm(fields){
   const amt = parseFloat(fields.amount);
   if(!amt || amt<=0 || !fields.date) return { valid:false };
+  const restockQty = parseFloat(fields.restockQuantity);
+  const hasRestock = !!fields.restockItemId && isFinite(restockQty) && restockQty > 0;
   return {
     valid: true,
     record: {
@@ -340,6 +346,8 @@ export function parseTransactionForm(fields){
       amount: amt,
       date: fields.date,
       note: (fields.note||"").trim(),
+      restockItemId: hasRestock ? fields.restockItemId : null,
+      restockQuantity: hasRestock ? restockQty : null,
     },
   };
 }
@@ -361,6 +369,20 @@ export function parseInventoryForm(fields, lastUpdated = todayISO()){
       lastUpdated,
     },
   };
+}
+
+// Adds a purchased quantity to an inventory item's stock — called once, when
+// a new "gasto" transaction is registered with a linked item and quantity
+// (see parseTransactionForm's restockItemId/restockQuantity). Not reapplied
+// on later edits of that transaction, so a stock bump only ever happens once
+// per purchase. Returns the inventory unchanged if the item isn't found.
+export function applyInventoryRestock(inventory, itemId, quantity, lastUpdated = todayISO()){
+  if(!itemId || !(quantity > 0)) return inventory;
+  const idx = inventory.findIndex(i => i.id === itemId);
+  if(idx < 0) return inventory;
+  const next = inventory.slice();
+  next[idx] = { ...next[idx], quantity: next[idx].quantity + quantity, lastUpdated };
+  return next;
 }
 
 export function parseMilkForm(getValue, cows, hasCalves = true){
@@ -501,9 +523,10 @@ export function summarizeHerd(events){
 
 // ---------- Ganado de levante (per-animal buy/sell) ----------
 // Each levante animal is bought, raised ("En levante"), and later sold. Its
-// profit is only realized once sold: precio de venta − precio de compra. This
-// registry is self-contained — it tracks its own ledger and doesn't push
-// transactions into Cuentas.
+// profit is only realized once sold: precio de venta − precio de compra. A
+// sale also generates a linked "Venta de ganado de levante" income
+// transaction in Cuentas (see computeLevanteSaleTransaction below), same as
+// a milk day generates a "Venta de leche" transaction.
 const optionalNumber = (v) => {
   if(v === "" || v == null) return null;
   const n = parseFloat(v);
@@ -554,4 +577,32 @@ export function computeLevanteProfit(animals, from, to){
   const totalGanancia = sold.reduce((s, a) => s + a.ganancia, 0);
   const enLevante = animals.filter(a => a.estado !== "Vendido");
   return { sold, totalGanancia, enLevante };
+}
+
+// ---------- Ganado de levante ↔ Cuentas ----------
+export const levanteTransactionId = (animalId) => "levante-" + animalId;
+
+// Returns the transaction a sold levante animal should generate, or null if
+// it doesn't qualify (needs to be marked "Vendido" with a sale price above
+// zero) — same shape of rule as computeMilkSaleTransaction.
+export function computeLevanteSaleTransaction(animal){
+  if(animal.estado !== "Vendido") return null;
+  const price = animal.salePrice;
+  if(!(typeof price === "number" && price > 0)) return null;
+  return {
+    id: levanteTransactionId(animal.id),
+    type: "ingreso",
+    category: "Venta de ganado de levante",
+    amount: price,
+    date: animal.saleDate,
+    note: "Generado automáticamente desde venta de ganado de levante",
+  };
+}
+
+export function syncLevanteSaleTransaction(transactions, animal){
+  return upsertLinkedTransaction(transactions, levanteTransactionId(animal.id), computeLevanteSaleTransaction(animal));
+}
+
+export function removeLevanteSaleTransaction(transactions, animalId){
+  return transactions.filter(t => t.id !== levanteTransactionId(animalId));
 }
