@@ -1,4 +1,4 @@
-const CACHE_NAME = "finca-cache-v15";
+const CACHE_NAME = "finca-cache-v16";
 const ASSETS = ["./", "./index.html", "./app-logic.js", "./manifest.json", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {
@@ -17,17 +17,19 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// Network-first, falling back to the cache only when the network fetch fails
+// (offline). A cache-first strategy would serve whatever got cached on first
+// visit forever, since nothing else in this app ever prompts the farmer to
+// update — a phone that's ever online again should always pick up the latest
+// deployed version instead of getting stuck on a stale one indefinitely.
 self.addEventListener("fetch", (event) => {
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-          return response;
-        })
-        .catch(() => cached);
-    })
+    fetch(event.request)
+      .then((response) => {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
