@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   STORAGE_KEY, PIE_COLORS,
-  uid, fmtCOP, fmtDate, monthLabel, todayISO, escapeHtml,
+  uid, fmtCOP, fmtCompactCOP, fmtDate, monthLabel, todayISO, escapeHtml,
   loadData, saveData, sanitizeAppData,
   computeMonthly, computeSummary,
   totalProducido, totalProducidoByOrdeno, computeMilkChartMax, findDuplicateMilkRecord,
-  computeReport, buildTransactionsCsv, buildBackupPayload, parseBackupData,
+  computeReport, computeProductionChartData, computeProductionChartMax,
+  buildTransactionsCsv, buildBackupPayload, parseBackupData,
   parseTransactionForm, parseInventoryForm, parseMilkForm, parseCowForm,
   milkTransactionId, getLastMilkPrice, computeMilkSaleTransaction,
   syncMilkSaleTransaction, removeMilkSaleTransaction,
@@ -334,6 +335,28 @@ describe("findDuplicateMilkRecord", () => {
 });
 
 // ---------- Reportes ----------
+describe("fmtCompactCOP", () => {
+  it("shows small amounts as plain numbers", () => {
+    expect(fmtCompactCOP(0)).toBe("$0");
+    expect(fmtCompactCOP(900)).toBe("$900");
+  });
+  it("abbreviates thousands with k", () => {
+    expect(fmtCompactCOP(45000)).toBe("$45k");
+    expect(fmtCompactCOP(1500)).toBe("$1.5k");
+  });
+  it("abbreviates millions with M", () => {
+    expect(fmtCompactCOP(1234567)).toBe("$1.2M");
+    expect(fmtCompactCOP(15000000)).toBe("$15M");
+  });
+  it("preserves the sign for negative amounts", () => {
+    expect(fmtCompactCOP(-45000)).toBe("-$45k");
+  });
+  it("treats undefined/null as zero", () => {
+    expect(fmtCompactCOP(undefined)).toBe("$0");
+    expect(fmtCompactCOP(null)).toBe("$0");
+  });
+});
+
 describe("computeReport", () => {
   const transactions = [
     { type: "ingreso", category: "Venta de leche", amount: 500, date: "2026-01-05" },
@@ -369,6 +392,55 @@ describe("computeReport", () => {
     expect(filtered).toEqual([]);
     expect(catList).toEqual([]);
     expect(gradient).toBe("");
+  });
+});
+
+describe("computeProductionChartData", () => {
+  it("groups by day and computes produced/consumed/sold for a range of 31 days or less", () => {
+    const records = [
+      { id: "m1", date: "2026-01-05", farmConsumption: 2, calfConsumption: 1, hasCalves: true, deliveredToMilkman: 5, perCow: { c1: { am: 10, pm: 5 } } },
+      { id: "m2", date: "2026-01-06", farmConsumption: 1, calfConsumption: 0, hasCalves: false, deliveredToMilkman: 8, perCow: { c1: { am: 8, pm: 4 } } },
+    ];
+    const { points, byWeek } = computeProductionChartData(records, "2026-01-01", "2026-01-31");
+    expect(byWeek).toBe(false);
+    expect(points).toHaveLength(2);
+    expect(points[0]).toMatchObject({ key: "2026-01-05", produced: 15, consumed: 3, sold: 5 });
+    // hasCalves:false -> calfConsumption ignored even though it's non-zero on the record
+    expect(points[1]).toMatchObject({ key: "2026-01-06", produced: 12, consumed: 1, sold: 8 });
+  });
+
+  it("switches to weekly grouping for ranges longer than 31 days", () => {
+    const records = [
+      { id: "m1", date: "2026-01-05", farmConsumption: 0, perCow: { c1: { am: 10, pm: 0 } }, deliveredToMilkman: 10 },
+      { id: "m2", date: "2026-01-06", farmConsumption: 0, perCow: { c1: { am: 5, pm: 0 } }, deliveredToMilkman: 5 },
+    ];
+    const { points, byWeek } = computeProductionChartData(records, "2026-01-01", "2026-03-01");
+    expect(byWeek).toBe(true);
+    // both records fall in the same Mon-Sun week (2026-01-05 is a Monday)
+    expect(points).toHaveLength(1);
+    expect(points[0].produced).toBe(15);
+    expect(points[0].label).toMatch(/^Sem\./);
+  });
+
+  it("excludes records outside the range and returns no points when there's no production", () => {
+    const records = [
+      { id: "m1", date: "2025-12-01", perCow: { c1: { am: 10, pm: 0 } } },
+    ];
+    const { points } = computeProductionChartData(records, "2026-01-01", "2026-01-31");
+    expect(points).toEqual([]);
+  });
+});
+
+describe("computeProductionChartMax", () => {
+  it("returns the largest value across all three series", () => {
+    const points = [
+      { produced: 10, consumed: 3, sold: 7 },
+      { produced: 4, consumed: 20, sold: 2 },
+    ];
+    expect(computeProductionChartMax(points)).toBe(20);
+  });
+  it("returns at least 1 to avoid division by zero when there's no data", () => {
+    expect(computeProductionChartMax([])).toBe(1);
   });
 });
 

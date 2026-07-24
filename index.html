@@ -147,10 +147,12 @@
   .ok{ color:var(--olive); }
   .empty{ text-align:center; color:var(--ink-faint); font-size:13px; padding:30px 0; }
   .empty::before{ content:"🗒️"; display:block; font-size:26px; margin-bottom:8px; opacity:.55; }
-  .bars{ display:flex; align-items:flex-end; gap:10px; height:150px; padding-top:8px; }
+  .bars{ display:flex; align-items:flex-end; gap:10px; height:164px; padding-top:22px; }
   .bar-group{ flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; }
   .bar-pair{ display:flex; align-items:flex-end; gap:3px; height:120px; }
+  .bar-col{ height:100%; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:2px; }
   .bar{ width:12px; border-radius:4px 4px 1px 1px; transition: height .5s var(--ease); box-shadow: inset 0 -2px 3px rgba(0,0,0,.08); }
+  .bar-value{ font-size:8.5px; font-weight:700; color:var(--ink-faint); white-space:nowrap; line-height:1; }
   .pie-wrap{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
   .pie{ width:120px; height:120px; border-radius:50%; flex-shrink:0; box-shadow: var(--shadow-md), inset 0 0 0 6px var(--card); }
   .legend-item{ display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; }
@@ -179,10 +181,11 @@
 <script type="module">
 import {
   INCOME_CATS, EXPENSE_CATS, INV_CATS, UNIT_OPTIONS, COW_STATES, CONCENTRADO_CATEGORY,
-  fmtCOP, fmtDate, monthLabel, todayISO, escapeHtml as esc,
+  fmtCOP, fmtCompactCOP, fmtDate, monthLabel, todayISO, escapeHtml as esc,
   loadData, saveData,
   computeSummary, totalProducidoByOrdeno, computeMilkChartMax,
   findDuplicateMilkRecord, computeReport, buildTransactionsCsv, buildBackupPayload,
+  computeProductionChartData, computeProductionChartMax,
   parseBackupData, parseTransactionForm, parseInventoryForm, parseMilkForm, parseCowForm,
   getLastMilkPrice, syncMilkSaleTransaction, removeMilkSaleTransaction,
   cowEstado, isProductionCow, milkFormCows, computeCowProfitability,
@@ -252,8 +255,14 @@ function viewResumen(){
     <div class="bars">${monthly.map(m=>`
       <div class="bar-group">
         <div class="bar-pair">
-          <div class="bar" style="height:${(m.ingreso/maxVal*120)||0}px;background:var(--olive)"></div>
-          <div class="bar" style="height:${(m.gasto/maxVal*120)||0}px;background:var(--brick)"></div>
+          <div class="bar-col">
+            <div class="bar-value">${fmtCompactCOP(m.ingreso)}</div>
+            <div class="bar" style="height:${(m.ingreso/maxVal*100)||0}px;background:var(--olive)"></div>
+          </div>
+          <div class="bar-col">
+            <div class="bar-value">${fmtCompactCOP(m.gasto)}</div>
+            <div class="bar" style="height:${(m.gasto/maxVal*100)||0}px;background:var(--brick)"></div>
+          </div>
         </div>
         <div style="font-size:10px;color:var(--ink-faint)">${m.label}</div>
       </div>`).join("")}
@@ -476,8 +485,14 @@ function viewProduccion(){
       return `
       <div class="bar-group">
         <div class="bar-pair">
-          <div class="bar" style="height:${(am/maxVal*120)||0}px;background:var(--olive)"></div>
-          <div class="bar" style="height:${(pm/maxVal*120)||0}px;background:var(--ochre)"></div>
+          <div class="bar-col">
+            <div class="bar-value">${am.toFixed(1)}</div>
+            <div class="bar" style="height:${(am/maxVal*100)||0}px;background:var(--olive)"></div>
+          </div>
+          <div class="bar-col">
+            <div class="bar-value">${pm.toFixed(1)}</div>
+            <div class="bar" style="height:${(pm/maxVal*100)||0}px;background:var(--ochre)"></div>
+          </div>
         </div>
         <div style="font-size:9px;color:var(--ink-faint)">${fmtDate(r.date).slice(0,6)}</div>
       </div>`;
@@ -699,6 +714,9 @@ function viewGanado(){
 function viewReportes(){
   const { filtered, ingresos, gastos, catList, gradient } = computeReport(state.transactions, state.repFrom, state.repTo);
   const profit = computeCowProfitability(state.cows, state.milkRecords, state.transactions, state.repFrom, state.repTo);
+  const { points: prodPointsAll, byWeek } = computeProductionChartData(state.milkRecords, state.repFrom, state.repTo);
+  const prodPoints = prodPointsAll.slice(-10);
+  const prodMax = computeProductionChartMax(prodPoints);
 
   return `
   <div class="card no-print">
@@ -739,6 +757,36 @@ function viewReportes(){
           filtered.map(t=>`<tr><td>${fmtDate(t.date)}</td><td>${esc(t.category)}</td><td class="mono ${t.type==='ingreso'?'ok':'warn'}" style="text-align:right">${t.type==='ingreso'?'+':'−'}${fmtCOP(t.amount)}</td></tr>`).join("")}
       </tbody>
     </table>
+  </div>
+
+  <div class="card">
+    <div class="serif" style="font-size:16px;font-weight:700;color:var(--green)">Producción, consumo y venta</div>
+    <div class="muted" style="margin-bottom:8px">${fmtDate(state.repFrom)} — ${fmtDate(state.repTo)} · por ${byWeek?'semana':'día'}${prodPointsAll.length>prodPoints.length?` (últimas ${prodPoints.length})`:""}</div>
+    ${prodPoints.length===0 ? `<p class="empty">Sin producción de leche en este rango.</p>` : `
+    <div class="bars">${prodPoints.map(p=>`
+      <div class="bar-group">
+        <div class="bar-pair">
+          <div class="bar-col">
+            <div class="bar-value">${p.produced.toFixed(1)}</div>
+            <div class="bar" style="width:9px;height:${(p.produced/prodMax*100)||0}px;background:var(--olive)"></div>
+          </div>
+          <div class="bar-col">
+            <div class="bar-value">${p.consumed.toFixed(1)}</div>
+            <div class="bar" style="width:9px;height:${(p.consumed/prodMax*100)||0}px;background:var(--brick)"></div>
+          </div>
+          <div class="bar-col">
+            <div class="bar-value">${p.sold.toFixed(1)}</div>
+            <div class="bar" style="width:9px;height:${(p.sold/prodMax*100)||0}px;background:var(--ochre)"></div>
+          </div>
+        </div>
+        <div style="font-size:9px;color:var(--ink-faint)">${esc(p.label)}</div>
+      </div>`).join("")}
+    </div>
+    <div style="display:flex;gap:14px;margin-top:8px;font-size:11px;flex-wrap:wrap">
+      <span><span class="dot" style="background:var(--olive)"></span> Producido</span>
+      <span><span class="dot" style="background:var(--brick)"></span> Consumido (casa + terneros)</span>
+      <span><span class="dot" style="background:var(--ochre)"></span> Vendido</span>
+    </div>`}
   </div>
 
   <div class="card">
